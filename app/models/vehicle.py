@@ -87,10 +87,13 @@ class Vehicle:
         ### Returns:
             float : The next max charge
         """
-        return min(
-            self._max_charging_rate + current_charge,
-            self._max_charge,
-            (time_before_departure - 1) * self._max_discharging_rate + self._target_charge,
+        return round(
+            min(
+                self._max_charging_rate + current_charge,
+                self._max_charge,
+                (time_before_departure - 1) * self._max_discharging_rate + self._target_charge,
+            ),
+            3,
         )
 
     def _calculate_next_min_charge(self, current_charge: float, time_before_departure: int):
@@ -114,34 +117,30 @@ class Vehicle:
         ### Returns:
             float : The next min charge
         """
-        return max(
-            current_charge - self._max_discharging_rate,
-            self._min_charge,
-            self._target_charge - (time_before_departure - 1) * self._max_charging_rate,
+        return round(
+            max(
+                current_charge - self._max_discharging_rate,
+                self._min_charge,
+                self._target_charge - (time_before_departure - 1) * self._max_charging_rate,
+            ),
+            3,
         )
 
     def _update_next_charging_states(self):
         """
-        Update next max and min charge state variables
-
-        Also calculate the emergency charges:
-            - If both next charges are positive then:
-                ``emergency_plus_charge = next_min_charge - current_charge, emergency_minus_charge = 0``
-            - if both next charges are negative then:
-                ``emergency_minus_charge = next_max_charge - current_charge, emergency_plus_charge = 0``
-            - Otherwise ``emergency_minus_charge = emergency_plus_charge = 0``
+        Update max and min charge state variables
+        - ``ΔΕ+(max) = max(0, next_max_charge - current_charge)``
+        - ``ΔΕ+(min) = max(0, next_min_charge - current_charge)``
+        - ``ΔΕ-(max) = max(0, current_charge - next_min_charge)``
+        - ``ΔΕ-(min) = max(0, current_charge - next_max_charge)``
         """
-        self._next_max_charge = self._calculate_next_max_charge(self._current_charge, self._time_before_departure)
-        self._next_min_charge = self._calculate_next_min_charge(self._current_charge, self._time_before_departure)
-        if self._next_max_charge > 0 and self._next_min_charge > 0:
-            self._emergency_plus_charge = self._next_min_charge - self._current_charge
-            self._emergency_minus_charge = 0.
-        elif self._next_max_charge < 0 and self._next_min_charge < 0:
-            self._emergency_plus_charge = 0.
-            self._emergency_minus_charge = self._next_max_charge - self._current_charge
-        else:
-            self._emergency_plus_charge = 0.
-            self._emergency_minus_charge = 0.
+        next_max_charge = self._calculate_next_max_charge(self._current_charge, self._time_before_departure)
+        next_min_charge = self._calculate_next_min_charge(self._current_charge, self._time_before_departure)
+
+        self._next_max_charge = round(max(0, next_max_charge - self._current_charge), 3)
+        self._next_min_charge = round(max(0, next_min_charge - self._current_charge), 3)
+        self._next_max_discharge = round(max(0, self._current_charge - next_min_charge), 3)
+        self._next_min_discharge = round(max(0, self._current_charge - next_max_charge), 3)
 
     def _calculate_charge_curves(self):
         """
@@ -197,17 +196,18 @@ class Vehicle:
         min_curve_area: float = np.trapz(min_curve)
         diff_curve_area = max_curve_area - min_curve_area
 
-        max_intersection = find_intersection(x_axes, max_curve, x_axes, current_charge_line)
-        min_intersection = find_intersection(x_axes, min_curve, x_axes, current_charge_line)
+        max_intersection = find_intersection(x_axes[1:], max_curve[1:], x_axes[1:], current_charge_line[1:])
+        min_intersection = find_intersection(x_axes[1:], min_curve[1:], x_axes[1:], current_charge_line[1:])
 
         intersection = max_intersection or min_intersection
+
         if (intersection is None) and (self._current_charge == self._target_charge):
             intersection = (float(self._time_before_departure), self._current_charge)
 
         if intersection is None:
             diff = self._current_charge - self._target_charge
-            self._charge_priority = 0 if diff > 0 else 1
-            self._discharge_priority = 1 if diff > 0 else 0
+            self._charge_priority = 0.0 if diff > 0 else 1.0
+            self._discharge_priority = 1.0 if diff > 0 else 0.0
         else:
             inter_x, inter_y = intersection
             cutoff_index = math.ceil(inter_x)
@@ -220,8 +220,8 @@ class Vehicle:
             area_bellow: float = np.trapz(partial_min_curve, partial_x_axes)
 
             discharge_area = current_charge_area - area_bellow
-            self._discharge_priority = discharge_area / diff_curve_area
-            self._charge_priority = 1 - self._discharge_priority
+            self._discharge_priority = round(discharge_area / diff_curve_area, 3)
+            self._charge_priority = round(1 - self._discharge_priority, 3)
 
     def update(self):
         """
@@ -230,7 +230,7 @@ class Vehicle:
         self._update_next_charging_states()
         self._update_priorities()
 
-    def update_current_charge(self, energy: float, mean_priority: float, residue_energy: float):
+    def update_current_charge(self, charging_coefficient: float, normalization_constant: float, residue_energy: float):
         """
         Update current charge by providing:
             - the total energy, gained or lost, divided by the number of cars in the parking
@@ -239,28 +239,36 @@ class Vehicle:
 
         The current charge is updated based on the following formula:
             ``current_charge = current_charge + energy *
-            (1 + charge/discharge_priority - mean_priority) + residue_energy``
+            (1 + charge/discharge_priority - normalization_constant) + residue_energy``
 
         ### Arguments:
             energy (``float``) :
                 description: The total energy, bought or sold in this timestep, divided by the number
                 of cars in the parking
-            mean_priority (``float``) :
-                description: The mean charge or discharge priority (if we bought or sold energy respectively)
+            normalization_constant (``float``) :
+                description: The normalization constant to keep the sum of added/subtract energy equal to the total
             residue_energy (``float``) :
                 description: Any residue energy that wasn't allocated by the previous vehicles
 
         ### Returns:
             float : The residue energy that wasn't allocated by this vehicle
         """
-        charging = energy > 0
-        priority = self._charge_priority if charging else self._discharge_priority
+        is_charging = charging_coefficient > 0
+        priority = self._charge_priority if is_charging else self._discharge_priority
+        next_max_energy = self._next_max_charge if is_charging else self._next_max_discharge
+        sign = 1 if is_charging else -1
 
-        self._current_charge = self._current_charge + energy * (1 + priority - mean_priority) + residue_energy
+        new_vehicle_energy = (
+            next_max_energy * charging_coefficient * (1 + priority - normalization_constant) + residue_energy
+        )
+        residue = max(0, new_vehicle_energy * sign - next_max_energy) * sign
 
-        residue = max(self._current_charge - self._max_charge, 0) + min(self._current_charge - self._min_charge, 0)
-        self._current_charge = min(self._current_charge, self._max_charge)
-        self._current_charge = max(self._current_charge, self._min_charge)
+        self._current_charge = round(
+            self._current_charge + new_vehicle_energy - residue,
+            3,
+        )
+
+        print(charging_coefficient, next_max_energy, residue_energy, residue)
 
         self._time_before_departure -= 1
 
@@ -269,11 +277,24 @@ class Vehicle:
 
         return residue
 
-    def update_emergency_demand(self, energy):
-        if energy < 0:
-            self._target_charge -= (self._emergency_plus_charge - energy)
+    def update_emergency_demand(self, energy: float, is_charging: bool):
+        """
+        Satisfy the minimum demand of the vehicle
+
+        ### Arguments:
+            energy (``float``) :
+                description: The energy to satisfy the minimum needs
+            is_charging (``bool``) :
+                description: Whether the action is charging or discharging
+        """
+        if is_charging:
+            self._target_charge -= self._next_min_charge - energy
+            self._target_charge -= self._next_min_discharge
+            self._current_charge += energy
         else:
-            self._target_charge -= (self._emergency_minus_charge - energy)
+            self._target_charge -= self._next_min_discharge - energy
+            self._target_charge -= self._next_min_charge
+            self._current_charge -= energy
 
     def get_current_charge(self):
         """
@@ -338,6 +359,24 @@ class Vehicle:
         """
         return self._next_min_charge
 
+    def get_next_max_discharge(self):
+        """
+        Get next max discharge
+
+        ### Returns:
+            float : The next maximum discharge that can be achieved without compromising the target
+        """
+        return self._next_max_discharge
+
+    def get_next_min_discharge(self):
+        """
+        Get next min discharge
+
+        ### Returns:
+            float : The next minimum discharge that can be achieved without compromising the target
+        """
+        return self._next_min_discharge
+
     def get_charge_priority(self):
         """
         Get charge priority
@@ -356,24 +395,6 @@ class Vehicle:
         """
         return self._discharge_priority
 
-    def get_emergency_plus_charge(self):
-        """
-        Get emergency plus charge of the vehicle
-
-        ### Returns:
-            float : The emergency plus charge of the vehicle
-        """
-        return self._emergency_plus_charge
-
-    def get_emergency_minus_charge(self):
-        """
-        Get emergency minus charge of the vehicle
-
-        ### Returns:
-            float : The emergency minus charge of the vehicle
-        """
-        return self._emergency_minus_charge
-
     def toJson(self) -> Dict[str, Any]:
         return {
             "class": Vehicle.__name__,
@@ -386,6 +407,8 @@ class Vehicle:
             "min_discharging_rate": self._max_discharging_rate,
             "next_max_charge": self._next_max_charge,
             "next_min_charge": self._next_min_charge,
+            "next_max_discharge": self._next_max_discharge,
+            "next_min_discharge": self._next_min_discharge,
             "charge_priority": self._charge_priority,
             "discharge_priority": self._discharge_priority,
         }
