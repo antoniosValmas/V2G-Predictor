@@ -1,5 +1,4 @@
 from typing import List, Tuple
-import numpy as np
 import datetime
 
 
@@ -11,14 +10,24 @@ class EnergyCurve:
         data (`Tuple(datetime, float)[]`) :
             description: The raw data array. Each point consists of the timestamp and the cost of energy
     """
+    _data: List[Tuple[datetime.datetime, float]] = []
+    _x: List[datetime.datetime]
+    _y: List[float]
+    _start: int = 0
+    _end: int = 24
 
-    def __init__(self, data: List[Tuple[datetime.datetime, float]]):
-        self._data = data
-
-        self._x = [x for (x, _) in data]
-        self._y = [y for (_, y) in data]
-        self._first_derivate = np.gradient(self._y)
-        self._second_derivate = np.gradient(self._first_derivate)
+    def __init__(self, dataFile: str):
+        self._data = []
+        self._x = []
+        self._y = []
+        with open(dataFile) as csv:
+            for line in csv.readlines():
+                date, value = line.split(',')
+                date = datetime.datetime.strptime(date, '%Y-%m-%d %H:%M:%S')
+                value = float(value)
+                self._data.append((date, value))
+                self._x.append(date)
+                self._y.append(value)
 
     def get_raw_data(self):
         """
@@ -47,21 +56,26 @@ class EnergyCurve:
         """
         return self._y
 
-    def get_first_derivate(self):
+    def get_next_batch(self):
         """
-        Get the first derivative of energy demand curve
+        Returns the next batch of values
+        Moves window to the next values
 
-        ### Returns:
-            float[] : Thw first derivative values of the data
+        ### Returns
+            float[24] : A 24 size array with the energy cost
+            bool : Whether we reached the end of the data
         """
-        return self._first_derivate
+        ret = self._y[self._start:self._end]
+        self._start += 1
+        self._end += 1
+        return (ret, len(self._data) == self._end)
 
-    def get_second_derivate(self):
-        """
-        Get the second derivative of energy demand curve
+    def reset(self):
+        self._start = 0
+        self._end = 24
 
-        ### Returns:
-            float[] : Thw second derivative values of the data
-        . :math:d/23
+    def get_current_cost(self):
         """
-        return self._second_derivate
+        Get current energy cost
+        """
+        return self._y[self._start - 1]

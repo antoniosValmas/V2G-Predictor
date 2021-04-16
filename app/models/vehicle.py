@@ -263,19 +263,20 @@ class Vehicle:
         )
         residue = max(0, new_vehicle_energy * sign - next_max_energy) * sign
 
-        self._current_charge = round(
+        new_current_charge = round(
             self._current_charge + new_vehicle_energy - residue,
             3,
         )
 
-        print(charging_coefficient, next_max_energy, residue_energy, residue)
+        avg_charge_level = (new_current_charge + self._current_charge) / 2
+        self._current_charge = new_current_charge
 
         self._time_before_departure -= 1
 
         if self._time_before_departure != 0:
             self.update()
 
-        return residue
+        return avg_charge_level, residue
 
     def update_emergency_demand(self, energy: float, is_charging: bool):
         """

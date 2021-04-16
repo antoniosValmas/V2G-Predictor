@@ -102,6 +102,22 @@ class Parking:
         """
         return self._discharge_mean_priority
 
+    def get_max_charging_rate(self):
+        """
+        Get max charging rate
+        ### Returns
+            float : The max charging rate
+        """
+        return self._max_charging_rate
+
+    def get_max_discharging_rate(self):
+        """
+        Get max discharging rate
+        ### Returns
+            float : The max discharging rate
+        """
+        return self._max_discharging_rate
+
     def assign_vehicle(self, vehicle: Vehicle):
         """
         Assign vehicle to a parking space
@@ -198,14 +214,20 @@ class Parking:
             vehicle.update_emergency_demand(min(available_energy, min_energy(vehicle)), is_charging)
             available_energy = max(0, available_energy - min_energy(vehicle))
 
-        charging_coefficient = round(available_energy / next_energy_diff, 3)
+        charging_coefficient = round(available_energy / next_energy_diff, 3) if next_energy_diff != 0 else 0
         residue = 0.0
+        avg_charge_levels: List[float] = []
         for vehicle in sorted(
             priority_sorted_vehicles,
             key=lambda v: charging_coefficient * (1 + priority(v) - normalization_constant),
             reverse=True,
         ):
-            residue = vehicle.update_current_charge(sign * charging_coefficient, normalization_constant, residue)
+            avg_charge_level, residue = vehicle.update_current_charge(
+                sign * charging_coefficient, normalization_constant, residue
+            )
+            avg_charge_levels.append(avg_charge_level)
+
+        return avg_charge_levels
 
     def update(self, charging_coefficient):
         """
@@ -215,9 +237,10 @@ class Parking:
             charging_coefficient (``float``) :
                 description: The charging coefficient
         """
-        self.update_energy_state(charging_coefficient)
+        avg_charge_levels = self.update_energy_state(charging_coefficient)
         self.depart_vehicles()
         self._update_parking_state()
+        return avg_charge_levels
 
     def toJson(self) -> Dict[str, Any]:
         return {
