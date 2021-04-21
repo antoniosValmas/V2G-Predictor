@@ -22,11 +22,11 @@ obs = env._reset()
 
 print(f'Observation: {obs}')
 print(env._parking)
-create_vehicle_diagram(env._state["elapsed_time"])
+create_vehicle_diagram(env._state["step"])
 while not obs.is_last():
     a = int(input("Provide coefficient: "))
     action = [i == a for i in range(env._length)]
     obs = env._step(action)
     print(f'Observation: {obs}')
     print(env._parking)
-    create_vehicle_diagram(env._state["elapsed_time"])
+    create_vehicle_diagram(env._state["step"])

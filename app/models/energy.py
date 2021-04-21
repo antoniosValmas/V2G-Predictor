@@ -56,7 +56,7 @@ class EnergyCurve:
         """
         return self._y
 
-    def get_next_batch(self):
+    def get_next_batch(self, normalized=True):
         """
         Returns the next batch of values
         Moves window to the next values
@@ -65,7 +65,7 @@ class EnergyCurve:
             float[24] : A 24 size array with the energy cost
             bool : Whether we reached the end of the data
         """
-        ret = self._y[self._start:self._end]
+        ret = [val / (100 if normalized else 1) for val in self._y[self._start:self._end]]
         self._start += 1
         self._end += 1
         return (ret, len(self._data) == self._end)
