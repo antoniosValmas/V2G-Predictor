@@ -12,3 +12,10 @@ def test_vehicle(vehicle: Vehicle, axes: Axes):
 
     axes.plot(max_c)
     axes.plot(min_c)
+
+
+class Testing():
+    test_array = []
+
+    def __init__(self, t):
+        self.test_array.append(t)

@@ -27,10 +27,12 @@ class Parking:
     _current_charge: float = 0.0
     _max_charging_rate = cfg.MAX_CHARGING_RATE
     _max_discharging_rate = cfg.MAX_DISCHARGING_RATE
-    _vehicles: List[Vehicle] = []
 
-    def __init__(self, capacity: int):
+    def __init__(self, capacity: int, name: str):
+        _vehicles: List[Vehicle] = []
+        self._vehicles = _vehicles
         self._capacity = capacity
+        self.name = name
 
     def get_capacity(self):
         """
@@ -129,11 +131,11 @@ class Parking:
         ### Raises:
             ParkingIsFull: The parking has no free spaces
         """
-        self._current_charge += vehicle.get_current_charge()
         num_of_vehicles = len(self._vehicles)
         if num_of_vehicles == self._capacity:
             raise ParkingIsFull()
 
+        self._current_charge += vehicle.get_current_charge()
         vehicle.park(self._max_charging_rate, self._max_discharging_rate)
         self._vehicles.append(vehicle)
         self._vehicles.sort(key=lambda v: v.get_time_before_departure())
@@ -208,7 +210,7 @@ class Parking:
             self._normalization_charge_constant if is_charging else self._normalization_discharge_constant
         )
 
-        priority_sorted_vehicles = sorted(self._vehicles, key=lambda s: priority(s), reverse=True)
+        priority_sorted_vehicles = sorted(self._vehicles, key=lambda v: priority(v), reverse=True)
 
         for vehicle in priority_sorted_vehicles:
             vehicle.update_emergency_demand(min(available_energy, min_energy(vehicle)), is_charging)
@@ -218,7 +220,7 @@ class Parking:
         residue = 0.0
         avg_charge_levels: List[float] = []
         for vehicle in sorted(
-            priority_sorted_vehicles,
+            self._vehicles,
             key=lambda v: charging_coefficient * (1 + priority(v) - normalization_constant),
             reverse=True,
         ):
@@ -245,6 +247,7 @@ class Parking:
     def toJson(self) -> Dict[str, Any]:
         return {
             "class": Parking.__name__,
+            "name": self.name,
             "max_charging_rage": self._max_charging_rate,
             "max_discharging_rate": self._max_discharging_rate,
             "vehicles": list(map(lambda v: v.toJson(), self._vehicles)),

@@ -41,6 +41,7 @@ class Vehicle:
         total_stay: int,
         max_charge: float,
         min_charge: float,
+        name: str,
     ):
         self._current_charge = initial_charge
         self._target_charge = target_charge
@@ -49,6 +50,7 @@ class Vehicle:
         self._min_charge = min_charge
         self._charge_priority = 0.0
         self._discharge_priority = 0.0
+        self.name = name
 
     def park(self, max_charging_rate: float, max_discharging_rate: float):
         """
@@ -399,6 +401,7 @@ class Vehicle:
     def toJson(self) -> Dict[str, Any]:
         return {
             "class": Vehicle.__name__,
+            "name": self.name,
             "current_change": self._current_charge,
             "target_charge": self._target_charge,
             "time_before_departure": self._time_before_departure,
