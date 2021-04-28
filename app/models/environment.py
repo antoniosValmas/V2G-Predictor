@@ -25,16 +25,16 @@ class V2GEnvironment(PyEnvironment):
             shape=(), dtype=np.int32, minimum=0, maximum=self._length - 1, name="action"
         )
         self._observation_spec = array_spec.BoundedArraySpec(
-            shape=(30,), dtype=np.float, minimum=0, maximum=1, name="observation"
+            shape=(30,), dtype=np.float32, minimum=0, maximum=1, name="observation"
         )
         self._time_step_spec = time_step.TimeStep(
             step_type=array_spec.BoundedArraySpec(shape=(), dtype=np.int32, minimum=0, maximum=2),
-            discount=array_spec.BoundedArraySpec(shape=(), dtype=np.float, minimum=0.0, maximum=1.0),
-            reward=array_spec.ArraySpec(shape=(), dtype=np.float),
+            discount=array_spec.BoundedArraySpec(shape=(), dtype=np.float32, minimum=0.0, maximum=1.0),
+            reward=array_spec.ArraySpec(shape=(), dtype=np.float32),
             observation=self._observation_spec,
         )
         self.name = name
-        self._state = {"time_of_day": 0, "step": 0}
+        self._state = {"time_of_day": 0, "step": 0, "done": False}
         self._parking = Parking(capacity, name)
         self._energy_curve = EnergyCurve(dataFile)
         self._add_new_cars()
@@ -50,14 +50,14 @@ class V2GEnvironment(PyEnvironment):
         return self._observation_spec
 
     def _reset(self) -> time_step.TimeStep:
-        self._state = {"time_of_day": 0, "step": 0}
+        self._state = {"time_of_day": 0, "step": 0, "done": False}
 
         self._energy_curve.reset()
         energy_costs, _ = self._energy_curve.get_next_batch()
-        self._current_time_step = time_step.TimeStep(
+        return time_step.TimeStep(
             step_type=time_step.StepType.FIRST,
-            reward=0.0,
-            discount=1.0,
+            reward=np.array(0.0, dtype=np.float32),
+            discount=np.array(1.0, dtype=np.float32),
             observation=np.array(
                 [
                     *energy_costs,
@@ -68,12 +68,17 @@ class V2GEnvironment(PyEnvironment):
                     self._parking.get_charge_mean_priority(),
                     self._parking.get_discharge_mean_priority(),
                 ],
-                dtype=np.float,
+                dtype=np.float32,
             ),
         )
-        return self._current_time_step
 
-    def _step(self, action: int) -> time_step.TimeStep:
+    def _step(self, action: int):
+        if self._state["done"]:
+            return self._reset()
+        else:
+            return self.do_step(action)
+
+    def do_step(self, action: int) -> time_step.TimeStep:
         idx = int(action)
         charging_coefficient = self._charging_coefficient_map[idx]
         is_charging = charging_coefficient > 0
@@ -81,43 +86,49 @@ class V2GEnvironment(PyEnvironment):
         num_of_vehicles = len(self._parking._vehicles)
         reward = 0.0
         if num_of_vehicles != 0:
-            max_energy = self._parking.get_next_max_charge() if is_charging else self._parking.get_next_max_discharge()
-            available_energy = max_energy * charging_coefficient
-            current_cost = self._energy_curve.get_current_cost() / 1000
-            min_charge = self._parking.get_next_min_charge()
-            min_discharge = self._parking.get_next_min_discharge()
-            max_rate = self._battery_capacity * num_of_vehicles
-
-            avg_charge_levels = self._parking.update(charging_coefficient)
-
-            cost = int(available_energy * current_cost * 100)
-            unmet_demand = int(
-                (
-                    max(0, min_charge - available_energy) + min_discharge
-                    if is_charging
-                    else max(0, min_discharge - abs(available_energy)) + min_charge
+            try:
+                max_energy = (
+                    self._parking.get_next_max_charge() if is_charging else self._parking.get_next_max_discharge()
                 )
-                * current_cost
-                * 100
-            )
-            cycle_degradation_cost = int(
-                self.cycle_degradation(abs(available_energy) / max_rate)
-                * self._battery_capacity
-                * self._battery_cost
-                * num_of_vehicles
-                * 100
-            )
-            age_degradation_cost = 0.0
-            for charge_level in avg_charge_levels:
-                age_degradation_cost += (
-                    self.age_degradation(charge_level / self._battery_capacity)
+                available_energy = max_energy * charging_coefficient
+                current_cost = self._energy_curve.get_current_cost() / 1000
+                min_charge = self._parking.get_next_min_charge()
+                min_discharge = self._parking.get_next_min_discharge()
+                max_rate = self._battery_capacity * num_of_vehicles
+
+                avg_charge_levels = self._parking.update(charging_coefficient)
+
+                cost = int(available_energy * current_cost * 100)
+                unmet_demand = int(
+                    (
+                        max(0, min_charge - available_energy) + min_discharge
+                        if is_charging
+                        else max(0, min_discharge - abs(available_energy)) + min_charge
+                    )
+                    * current_cost
+                    * 100
+                )
+                cycle_degradation_cost = int(
+                    self.cycle_degradation(abs(available_energy) / max_rate)
                     * self._battery_capacity
                     * self._battery_cost
+                    * num_of_vehicles
+                    * 100
                 )
-            age_degradation_cost = int(age_degradation_cost * 100)
+                age_degradation_cost = 0.0
+                for charge_level in avg_charge_levels:
+                    age_degradation_cost += (
+                        self.age_degradation(charge_level / self._battery_capacity)
+                        * self._battery_capacity
+                        * self._battery_cost
+                    )
+                age_degradation_cost = int(age_degradation_cost * 100)
 
-            reward = -cost - unmet_demand ** 2 - cycle_degradation_cost - age_degradation_cost
-
+                reward = -cost - unmet_demand ** 2 - cycle_degradation_cost - age_degradation_cost
+            except ValueError as e:
+                print(cost, unmet_demand, cycle_degradation_cost, age_degradation_cost, avg_charge_levels)
+                print(self)
+                raise e
         # print(f"Energy cost: {cost}")
         # print(f"Unmet demand cost: {unmet_demand}")
         # print(f"Cycle degradation cost: {cycle_degradation_cost}")
@@ -129,10 +140,12 @@ class V2GEnvironment(PyEnvironment):
         self._state["step"] += 1
         energy_costs, done = self._energy_curve.get_next_batch()
 
-        self._current_time_step = time_step.TimeStep(
+        self._state["done"] = done
+
+        return time_step.TimeStep(
             step_type=time_step.StepType.MID if not done else time_step.StepType.LAST,
-            reward=float(reward),
-            discount=1.0,
+            reward=np.array(reward, dtype=np.float32),
+            discount=np.array(1.0, dtype=np.float32),
             observation=np.array(
                 [
                     *energy_costs,
@@ -143,10 +156,9 @@ class V2GEnvironment(PyEnvironment):
                     self._parking.get_charge_mean_priority(),
                     self._parking.get_discharge_mean_priority(),
                 ],
-                dtype=np.float,
+                dtype=np.float32,
             ),
         )
-        return self._current_time_step
 
     def _add_new_cars(self):
         day_coefficient = math.sin(math.pi / 12 * self._state["time_of_day"]) / 2 + 0.5
@@ -182,10 +194,7 @@ class V2GEnvironment(PyEnvironment):
         return 4.14e-10 * 3600 * pow(math.e, (1.04 * (soc - 0.5)))
 
     def toJson(self) -> Dict[str, Any]:
-        return {
-            "name": self.name,
-            "parking": self._parking.toJson()
-        }
+        return {"name": self.name, "parking": self._parking.toJson()}
 
     def __repr__(self) -> str:
         return json.dumps(self.toJson(), indent=4)

@@ -20,11 +20,11 @@ from tf_agents.trajectories import trajectory
 class DQNPolicy:
     num_iterations = 4000  # @param {type:"integer"}
 
-    initial_collect_steps = 100  # @param {type:"integer"}
+    initial_collect_steps = 24*30  # @param {type:"integer"}
     collect_steps_per_iteration = 1  # @param {type:"integer"}
     replay_buffer_max_length = 10000  # @param {type:"integer"}
 
-    batch_size = 32  # @param {type:"integer"}
+    batch_size = 1  # @param {type:"integer"}
     learning_rate = 1e-3  # @param {type:"number"}
     log_interval = 24  # @param {type:"integer"}
 
@@ -90,6 +90,9 @@ class DQNPolicy:
 
         self.iterator = iter(self.dataset)
 
+        self.train_env.reset()
+        self.eval_env.reset()
+
         self.collect_data(self.train_env, self.random_policy, self.initial_collect_steps)
 
     def train(self):
@@ -100,22 +103,26 @@ class DQNPolicy:
 
         for _ in range(self.num_iterations):
 
-            self.collect_data(
-                self.train_env, self.agent.collect_policy, self.collect_steps_per_iteration
-            )
-            # Sample a batch of data from the buffer and update the agent's network.
-            experience, _ = next(self.iterator)
-            train_loss = self.agent.train(experience).loss
+            try:
+                self.collect_data(
+                    self.train_env, self.agent.collect_policy, self.collect_steps_per_iteration
+                )
+                # Sample a batch of data from the buffer and update the agent's network.
+                experience, _ = next(self.iterator)
+                train_loss = self.agent.train(experience).loss
 
-            step = self.agent.train_step_counter.numpy()
+                step = self.agent.train_step_counter.numpy()
 
-            if step % self.log_interval == 0:
-                print("step = {0}: loss = {1}".format(step, train_loss))
+                if step % self.log_interval == 0:
+                    print("step = {0}: loss = {1}".format(step, train_loss))
 
-            if step % self.eval_interval == 0:
-                avg_return = compute_avg_return(self.eval_env, self.agent.policy, self.num_eval_episodes)
-                print("step = {0}: Average Return = {1}".format(step, avg_return))
-                returns.append(avg_return)
+                if step % self.eval_interval == 0:
+                    avg_return = compute_avg_return(self.eval_env, self.agent.policy, self.num_eval_episodes)
+                    print("step = {0}: Average Return = {1}".format(step, avg_return))
+                    returns.append(avg_return)
+            except ValueError as e:
+                print(self.train_env.current_time_step())
+                raise e
 
     def collect_step(self, environment, policy):
         time_step = environment.current_time_step()

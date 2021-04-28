@@ -206,10 +206,17 @@ class Vehicle:
         if (intersection is None) and (self._current_charge == self._target_charge):
             intersection = (float(self._time_before_departure), self._current_charge)
 
+        if intersection is not None and math.isnan(intersection[0]) and math.isnan(intersection[1]):
+            print("Warning: NaN intersection found")
+            print(x_axes, max_curve, min_curve, current_charge_line)
+
         if intersection is None:
             diff = self._current_charge - self._target_charge
             self._charge_priority = 0.0 if diff > 0 else 1.0
             self._discharge_priority = 1.0 if diff > 0 else 0.0
+        elif diff_curve_area == 0 and intersection is not None:
+            self._charge_priority = 0.5
+            self._discharge_priority = 0.5
         else:
             inter_x, inter_y = intersection
             cutoff_index = math.ceil(inter_x)
@@ -224,6 +231,12 @@ class Vehicle:
             discharge_area = current_charge_area - area_bellow
             self._discharge_priority = round(discharge_area / diff_curve_area, 3)
             self._charge_priority = round(1 - self._discharge_priority, 3)
+
+        if math.isnan(self._discharge_priority):
+            print("Warning: Nan priorities found")
+            print(intersection)
+            print(x_axes, max_curve, min_curve, current_charge_line)
+            print(discharge_area, diff_curve_area, current_charge_area, area_bellow)
 
     def update(self):
         """
@@ -275,6 +288,11 @@ class Vehicle:
 
         self._time_before_departure -= 1
 
+        if math.isnan(avg_charge_level) or math.isnan(residue) or math.isnan(self._current_charge):
+            print("Warning: NaN values found on vehicle update")
+            print(avg_charge_level, residue, self._current_charge)
+            print(priority, next_max_energy, sign, is_charging, charging_coefficient, new_vehicle_energy)
+
         if self._time_before_departure != 0:
             self.update()
 
@@ -298,6 +316,10 @@ class Vehicle:
             self._target_charge -= self._next_min_discharge - energy
             self._target_charge -= self._next_min_charge
             self._current_charge -= energy
+
+        if math.isnan(self._target_charge) or math.isnan(self._current_charge):
+            print('Warning: NaN values found on update_emergency_demand')
+            print(self._target_charge, self._current_charge, energy, is_charging)
 
     def get_current_charge(self):
         """

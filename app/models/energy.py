@@ -66,11 +66,15 @@ class EnergyCurve:
             bool : Whether we reached the end of the data
         """
         ret = [val / (100 if normalized else 1) for val in self._y[self._start:self._end]]
-        self._start += 1
-        self._end += 1
+        if len(self._data) > self._end:
+            self._start += 1
+            self._end += 1
+        else:
+            print('Done')
         return (ret, len(self._data) == self._end)
 
     def reset(self):
+        print('reset')
         self._start = 0
         self._end = 24
 
