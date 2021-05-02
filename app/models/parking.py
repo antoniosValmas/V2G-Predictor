@@ -145,7 +145,15 @@ class Parking:
         """
         Filter out all vehicles that have left the parking
         """
+        departed_vehicles = list(filter(lambda v: v.get_time_before_departure() == 0, self._vehicles))
         self._vehicles = list(filter(lambda v: v.get_time_before_departure() != 0, self._vehicles))
+        met_demand = []
+        overcharged_time = []
+        for v in departed_vehicles:
+            met_demand.append((v.get_target_charge() - v.get_original_target_charge()) / v.get_original_target_charge())
+            overcharged_time.append(v.get_overchared_time())
+
+        return met_demand, overcharged_time
 
     def _update_parking_state(self):
         self._next_max_charge = 0.0
@@ -201,6 +209,7 @@ class Parking:
         is_charging = charging_coefficient > 0
         sign = 1 if is_charging else -1
         next_energy_diff = self._next_max_charge if is_charging else self._next_max_discharge
+        next_minimum_req = self._next_min_charge if is_charging else self._next_min_discharge
 
         available_energy = next_energy_diff * abs(charging_coefficient)
 
@@ -212,9 +221,12 @@ class Parking:
 
         priority_sorted_vehicles = sorted(self._vehicles, key=lambda v: priority(v), reverse=True)
 
+        met_demand_coefficient = min(1, available_energy / next_minimum_req) if next_minimum_req != 0 else 0
+
         for vehicle in priority_sorted_vehicles:
-            vehicle.update_emergency_demand(min(available_energy, min_energy(vehicle)), is_charging)
-            available_energy = max(0, available_energy - min_energy(vehicle))
+            normalized_energy = met_demand_coefficient * min_energy(vehicle)
+            vehicle.update_emergency_demand(min(available_energy, normalized_energy), is_charging)
+            available_energy = max(0, available_energy - normalized_energy)
 
         charging_coefficient = round(available_energy / next_energy_diff, 3) if next_energy_diff != 0 else 0
         residue = 0.0
@@ -240,9 +252,9 @@ class Parking:
                 description: The charging coefficient
         """
         avg_charge_levels = self.update_energy_state(charging_coefficient)
-        self.depart_vehicles()
+        metrics = self.depart_vehicles()
         self._update_parking_state()
-        return avg_charge_levels
+        return avg_charge_levels, metrics
 
     def toJson(self) -> Dict[str, Any]:
         return {

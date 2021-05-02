@@ -33,12 +33,40 @@ class V2GEnvironment(PyEnvironment):
             reward=array_spec.ArraySpec(shape=(), dtype=np.float32),
             observation=self._observation_spec,
         )
-        self.name = name
-        self._state = {"time_of_day": 0, "step": 0, "done": False}
+        self._name = name
+        self._state = {
+            "time_of_day": 0,
+            "step": 0,
+            "metrics": {
+                "loss": [],
+                "num_of_vehicles": [],
+                "cost": [],
+                "unmet_demand": [],
+                "unmet_demand_per_car": [],
+                "overcharged_time_per_car": [],
+                "cycle_degradation": [],
+                "age_degradation": [],
+            },
+        }
         self._parking = Parking(capacity, name)
         self._energy_curve = EnergyCurve(dataFile)
         self._add_new_cars()
         self._reset()
+
+    def get_metrics(self):
+        return self._state["metrics"]
+
+    def reset_metrics(self):
+        self._state["metrics"] = {
+            "loss": [],
+            "num_of_vehicles": [],
+            "cost": [],
+            "unmet_demand": [],
+            "unmet_demand_per_car": [],
+            "overcharged_time_per_car": [],
+            "cycle_degradation": [],
+            "age_degradation": [],
+        }
 
     def time_step_spec(self):
         return self._time_step_spec
@@ -50,7 +78,8 @@ class V2GEnvironment(PyEnvironment):
         return self._observation_spec
 
     def _reset(self) -> time_step.TimeStep:
-        self._state = {"time_of_day": 0, "step": 0, "done": False}
+        self._state["time_of_day"] = 0
+        self._state["step"] = 0
 
         self._energy_curve.reset()
         energy_costs, _ = self._energy_curve.get_next_batch()
@@ -72,19 +101,20 @@ class V2GEnvironment(PyEnvironment):
             ),
         )
 
-    def _step(self, action: int):
-        if self._state["done"]:
-            return self._reset()
-        else:
-            return self.do_step(action)
-
-    def do_step(self, action: int) -> time_step.TimeStep:
+    def _step(self, action: int) -> time_step.TimeStep:
         idx = int(action)
         charging_coefficient = self._charging_coefficient_map[idx]
         is_charging = charging_coefficient > 0
 
         num_of_vehicles = len(self._parking._vehicles)
         reward = 0.0
+
+        self._state["metrics"]["cost"].append(0)
+        self._state["metrics"]["unmet_demand"].append(0)
+        self._state["metrics"]["cycle_degradation"].append(0)
+        self._state["metrics"]["age_degradation"].append(0)
+        self._state["metrics"]["num_of_vehicles"].append(num_of_vehicles)
+
         if num_of_vehicles != 0:
             try:
                 max_energy = (
@@ -96,7 +126,7 @@ class V2GEnvironment(PyEnvironment):
                 min_discharge = self._parking.get_next_min_discharge()
                 max_rate = self._battery_capacity * num_of_vehicles
 
-                avg_charge_levels = self._parking.update(charging_coefficient)
+                avg_charge_levels, (met_demand, overcharged_time) = self._parking.update(charging_coefficient)
 
                 cost = int(available_energy * current_cost * 100)
                 unmet_demand = int(
@@ -125,10 +155,20 @@ class V2GEnvironment(PyEnvironment):
                 age_degradation_cost = int(age_degradation_cost * 100)
 
                 reward = -cost - unmet_demand ** 2 - cycle_degradation_cost - age_degradation_cost
+
+                # Update metrics
+                self._state["metrics"]["cost"][-1] = cost
+                self._state["metrics"]["unmet_demand"][-1] = unmet_demand
+                self._state["metrics"]["cycle_degradation"][-1] = cycle_degradation_cost
+                self._state["metrics"]["age_degradation"][-1] = age_degradation_cost
+                self._state["metrics"]["unmet_demand_per_car"] += met_demand
+                self._state["metrics"]["overcharged_time_per_car"] += overcharged_time
+
             except ValueError as e:
                 print(cost, unmet_demand, cycle_degradation_cost, age_degradation_cost, avg_charge_levels)
                 print(self)
                 raise e
+
         # print(f"Energy cost: {cost}")
         # print(f"Unmet demand cost: {unmet_demand}")
         # print(f"Cycle degradation cost: {cycle_degradation_cost}")
@@ -139,8 +179,6 @@ class V2GEnvironment(PyEnvironment):
         self._state["time_of_day"] %= 24
         self._state["step"] += 1
         energy_costs, done = self._energy_curve.get_next_batch()
-
-        self._state["done"] = done
 
         return time_step.TimeStep(
             step_type=time_step.StepType.MID if not done else time_step.StepType.LAST,
@@ -162,7 +200,7 @@ class V2GEnvironment(PyEnvironment):
 
     def _add_new_cars(self):
         day_coefficient = math.sin(math.pi / 12 * self._state["time_of_day"]) / 2 + 0.5
-        new_cars = max(0, int(np.random.normal(5 * day_coefficient, 2 * day_coefficient)))
+        new_cars = max(0, int(np.random.normal(20 * day_coefficient, 2 * day_coefficient)))
         try:
             for _ in range(new_cars):
                 v = self._create_vehicle()
@@ -172,12 +210,12 @@ class V2GEnvironment(PyEnvironment):
 
     def _create_vehicle(self):
         total_stay = random.randint(7, 10)
-        min_charge = 6
-        max_charge = 54
-        initial_charge = round(10 + random.random() * 30, 3)
+        min_charge = 0
+        max_charge = 60
+        initial_charge = round(6 + random.random() * 20, 3)
         target_charge = round(34 + random.random() * 20, 3)
 
-        return Vehicle(initial_charge, target_charge, total_stay, max_charge, min_charge, self.name)
+        return Vehicle(initial_charge, target_charge, total_stay, max_charge, min_charge, self._name)
 
     def cycle_degradation(self, c_rate):
         return 5e-5 * c_rate + 1.8e-5
@@ -194,7 +232,7 @@ class V2GEnvironment(PyEnvironment):
         return 4.14e-10 * 3600 * pow(math.e, (1.04 * (soc - 0.5)))
 
     def toJson(self) -> Dict[str, Any]:
-        return {"name": self.name, "parking": self._parking.toJson()}
+        return {"name": self._name, "parking": self._parking.toJson()}
 
     def __repr__(self) -> str:
         return json.dumps(self.toJson(), indent=4)

@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 
 from app.tests.test_vehicle import test_vehicle
 
-env = V2GEnvironment(10, 'data/GR-data-11-20.csv')
+env = V2GEnvironment(10, 'data/GR-data-11-20.csv', 'test')
 
 
 def create_vehicle_diagram(step: int):
@@ -14,7 +14,7 @@ def create_vehicle_diagram(step: int):
     for i, v in enumerate(env._parking._vehicles):
         test_vehicle(v, axes[i])
 
-    fig.savefig(f"plots/step_{step}.png")
+    fig.savefig(f"plots/sub/sub/step_{step}.png")
     plt.close(fig)
 
 

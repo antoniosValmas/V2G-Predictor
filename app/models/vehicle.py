@@ -52,6 +52,9 @@ class Vehicle:
         self._discharge_priority = 0.0
         self.name = name
 
+        self._overcharged_time = 0
+        self._original_target_charge = target_charge
+
     def park(self, max_charging_rate: float, max_discharging_rate: float):
         """
         Park vehicle to parking space and initialize its state variables
@@ -287,6 +290,8 @@ class Vehicle:
         self._current_charge = new_current_charge
 
         self._time_before_departure -= 1
+        if (self._current_charge / self._max_charge) > 0.5:
+            self._overcharged_time += 1
 
         if math.isnan(avg_charge_level) or math.isnan(residue) or math.isnan(self._current_charge):
             print("Warning: NaN values found on vehicle update")
@@ -318,7 +323,7 @@ class Vehicle:
             self._current_charge -= energy
 
         if math.isnan(self._target_charge) or math.isnan(self._current_charge):
-            print('Warning: NaN values found on update_emergency_demand')
+            print("Warning: NaN values found on update_emergency_demand")
             print(self._target_charge, self._current_charge, energy, is_charging)
 
     def get_current_charge(self):
@@ -420,12 +425,31 @@ class Vehicle:
         """
         return self._discharge_priority
 
+    def get_original_target_charge(self):
+        """
+        Get original target charge
+
+        ### Returns:
+            float : The original target charge of the vehicle
+        """
+        return self._original_target_charge
+
+    def get_overchared_time(self):
+        """
+        Get overcharged time
+
+        ### Returns:
+            float : The time the vehicle spent on a SOC greater than 50%
+        """
+        return self._overcharged_time
+
     def toJson(self) -> Dict[str, Any]:
         return {
             "class": Vehicle.__name__,
             "name": self.name,
             "current_change": self._current_charge,
             "target_charge": self._target_charge,
+            "original_target_charge": self._original_target_charge,
             "time_before_departure": self._time_before_departure,
             "max_charge": self._max_charge,
             "min_charge": self._min_charge,

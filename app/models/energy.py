@@ -74,7 +74,6 @@ class EnergyCurve:
         return (ret, len(self._data) == self._end)
 
     def reset(self):
-        print('reset')
         self._start = 0
         self._end = 24
 
