@@ -1,8 +1,9 @@
 from __future__ import absolute_import, division, print_function
 
 from app.policies.utils import compute_avg_return, metrics_visualization
-
 from app.models.environment import V2GEnvironment
+
+import sys
 import tensorflow as tf
 
 from tensorflow import keras
@@ -19,18 +20,18 @@ from tf_agents.trajectories import trajectory
 
 
 class DQNPolicy:
-    num_iterations = 2400  # @param {type:"integer"}
+    num_iterations = 21600  # @param {type:"integer"}
 
     initial_collect_steps = 24 * 30  # @param {type:"integer"}
     collect_steps_per_iteration = 1  # @param {type:"integer"}
-    replay_buffer_max_length = 10000  # @param {type:"integer"}
+    replay_buffer_max_length = 100000  # @param {type:"integer"}
 
     batch_size = 1  # @param {type:"integer"}
     learning_rate = 1e-3  # @param {type:"number"}
     log_interval = 24  # @param {type:"integer"}
 
-    num_eval_episodes = 1  # @param {type:"integer"}
-    eval_interval = 2400  # @param {type:"integer"}
+    num_eval_episodes = 2  # @param {type:"integer"}
+    eval_interval = 24 * 30 * 3  # @param {type:"integer"}
 
     train_dir = "checkpoints"
 
@@ -50,11 +51,12 @@ class DQNPolicy:
                     units=30,
                     activation=keras.activations.relu,
                 ),
+                layers.Dense(units=128, activation=keras.activations.relu),
                 layers.BatchNormalization(),
-                layers.Dropout(0.4),
-                layers.Dense(units=1024, activation=keras.activations.relu),
+                layers.Dense(units=128, activation=keras.activations.relu),
                 layers.BatchNormalization(),
-                layers.Dropout(0.4),
+                layers.Dense(units=128, activation=keras.activations.relu),
+                layers.BatchNormalization(),
                 layers.Dense(
                     num_actions,
                     activation=keras.activations.softmax,
@@ -111,21 +113,12 @@ class DQNPolicy:
         self.train_env.reset()
         self.eval_env.reset()
 
-        self.collect_data(self.train_env, self.random_policy, self.initial_collect_steps)
-
-        dynamic_step_driver.DynamicStepDriver(
-            self.train_env,
-            self.random_policy,
-            observers=[self.replay_buffer.add_batch],
-            num_steps=self.initial_collect_steps,
-        )
-
-        self.train_env.reset()
-
     def train(self, load_policy=None):
+        self.collect_data(self.train_env, self.random_policy, self.initial_collect_steps)
         self.agent.train = common.function(self.agent.train)
         self.agent.train_step_counter.assign(0)
         avg_return = compute_avg_return(self.eval_env, self.random_policy, self.num_eval_episodes)
+        self.raw_eval_env.reset_metrics()
         returns = [avg_return]
 
         collect_op = dynamic_step_driver.DynamicStepDriver(
@@ -149,17 +142,20 @@ class DQNPolicy:
                 step = self.agent.train_step_counter.numpy()
 
                 if step % self.log_interval == 0:
-                    print(
-                        "step = {0}: loss = {1}".format(step, train_loss)
-                    )
+                    remainder = (step - 1) % self.eval_interval
+                    percentage = (remainder * 90) // self.eval_interval
+                    sys.stdout.write('\r')
+                    sys.stdout.write('\033[K')
+                    sys.stdout.write(f'[{"=" * percentage + " " * (90 - percentage)}] loss: {train_loss} ')
+                    sys.stdout.flush()
 
                 if step % self.eval_interval == 0:
                     avg_return = compute_avg_return(self.eval_env, self.agent.policy, self.num_eval_episodes)
                     print("step = {0}: Average Return = {1}".format(step, avg_return))
                     returns.append(avg_return)
 
-                    metrics_visualization(self.raw_train_env.get_metrics(), step // self.eval_interval)
-                    self.raw_train_env.reset_metrics()
+                    metrics_visualization(self.raw_eval_env.get_metrics(), step // self.eval_interval)
+                    self.raw_eval_env.reset_metrics()
 
             except ValueError as e:
                 print(self.train_env.current_time_step())

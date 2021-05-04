@@ -235,6 +235,9 @@ class Vehicle:
             self._discharge_priority = round(discharge_area / diff_curve_area, 3)
             self._charge_priority = round(1 - self._discharge_priority, 3)
 
+        self._charge_priority /= max(1, self._time_before_departure - 2)
+        self._discharge_priority /= max(1, self._time_before_departure - 2)
+
         if math.isnan(self._discharge_priority):
             print("Warning: Nan priorities found")
             print(intersection)
@@ -315,10 +318,10 @@ class Vehicle:
         """
         if is_charging:
             self._target_charge -= self._next_min_charge - energy
-            self._target_charge -= self._next_min_discharge
+            self._target_charge += self._next_min_discharge
             self._current_charge += energy
         else:
-            self._target_charge -= self._next_min_discharge - energy
+            self._target_charge += self._next_min_discharge - energy
             self._target_charge -= self._next_min_charge
             self._current_charge -= energy
 

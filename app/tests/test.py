@@ -14,7 +14,7 @@ def create_vehicle_diagram(step: int):
     for i, v in enumerate(env._parking._vehicles):
         test_vehicle(v, axes[i])
 
-    fig.savefig(f"plots/sub/sub/step_{step}.png")
+    fig.savefig(f"plots/step_{step}.png")
     plt.close(fig)
 
 
@@ -24,8 +24,7 @@ print(f'Observation: {obs}')
 print(env._parking)
 create_vehicle_diagram(env._state["step"])
 while not obs.is_last():
-    a = int(input("Provide coefficient: "))
-    action = [i == a for i in range(env._length)]
+    action = int(input("Provide coefficient: "))
     obs = env._step(action)
     print(f'Observation: {obs}')
     print(env._parking)

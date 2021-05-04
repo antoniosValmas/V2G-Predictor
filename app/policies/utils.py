@@ -52,7 +52,6 @@ def get_frequency(iteratable):
 
 def metrics_raw(metrics, epoch):
     raw_folder = 'plots/metrics'
-    plot_metric(metrics["num_of_vehicles"], 'Number of vehicles', raw_folder)
     plot_metric(metrics["cost"], 'Cost', raw_folder)
     plot_metric(metrics["unmet_demand"], 'Unmet demand', raw_folder)
     plot_metric(metrics["cycle_degradation"], 'Cycle degradation', raw_folder)
@@ -63,14 +62,9 @@ def moving_average(x, w):
     return np.convolve(x, np.ones(w), 'valid') / w
 
 
-def metrics_moving_average(metrics, epoch):
-    avg_folder = 'plots/average'
+def metrics_moving_average(metrics, epoch, policy):
+    avg_folder = f'plots/average_{policy}'
     window = 24
-    plot_metric(
-        moving_average(metrics["num_of_vehicles"], window),
-        f'Number of vehicles {epoch}',
-        avg_folder
-    )
     plot_metric(
         moving_average(metrics["cost"], window),
         f'Cost {epoch}',
@@ -93,8 +87,8 @@ def metrics_moving_average(metrics, epoch):
     )
 
 
-def metrics_frequency(metrics, epoch):
-    avg_folder = 'plots/average'
+def metrics_frequency(metrics, epoch, policy):
+    avg_folder = f'plots/average_{policy}'
     x_values, y_values = get_frequency(metrics["overcharged_time_per_car"])
     bar_metric(x_values, y_values, f"Overcharged time per car {epoch}", avg_folder)
 
@@ -102,6 +96,6 @@ def metrics_frequency(metrics, epoch):
     bar_metric(x_values, y_values, f"Unmet demand per car {epoch}", avg_folder)
 
 
-def metrics_visualization(metrics: Dict[str, List[Union[int, float]]], epoch: int):
-    metrics_moving_average(metrics, epoch)
-    metrics_frequency(metrics, epoch)
+def metrics_visualization(metrics: Dict[str, List[Union[int, float]]], epoch: int, policy: str):
+    metrics_moving_average(metrics, epoch, policy)
+    metrics_frequency(metrics, epoch, policy)

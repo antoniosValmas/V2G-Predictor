@@ -49,7 +49,7 @@ class V2GEnvironment(PyEnvironment):
             },
         }
         self._parking = Parking(capacity, name)
-        self._energy_curve = EnergyCurve(dataFile)
+        self._energy_curve = EnergyCurve(dataFile, name)
         self._add_new_cars()
         self._reset()
 
@@ -81,12 +81,11 @@ class V2GEnvironment(PyEnvironment):
         self._state["time_of_day"] = 0
         self._state["step"] = 0
 
-        self._energy_curve.reset()
-        energy_costs, _ = self._energy_curve.get_next_batch()
+        energy_costs = self._energy_curve.get_next_batch()
         return time_step.TimeStep(
             step_type=time_step.StepType.FIRST,
             reward=np.array(0.0, dtype=np.float32),
-            discount=np.array(1.0, dtype=np.float32),
+            discount=np.array(0, dtype=np.float32),
             observation=np.array(
                 [
                     *energy_costs,
@@ -108,6 +107,7 @@ class V2GEnvironment(PyEnvironment):
 
         num_of_vehicles = len(self._parking._vehicles)
         reward = 0.0
+        discount = 0.01
 
         self._state["metrics"]["cost"].append(0)
         self._state["metrics"]["unmet_demand"].append(0)
@@ -156,6 +156,7 @@ class V2GEnvironment(PyEnvironment):
 
                 reward = -cost - unmet_demand ** 2 - cycle_degradation_cost - age_degradation_cost
 
+                discount += min(0.99, 0.99 * unmet_demand / 200)
                 # Update metrics
                 self._state["metrics"]["cost"][-1] = cost
                 self._state["metrics"]["unmet_demand"][-1] = unmet_demand
@@ -174,16 +175,18 @@ class V2GEnvironment(PyEnvironment):
         # print(f"Cycle degradation cost: {cycle_degradation_cost}")
         # print(f"Age degradation cost: {age_degradation_cost}")
 
-        self._add_new_cars()
         self._state["time_of_day"] += 1
         self._state["time_of_day"] %= 24
         self._state["step"] += 1
-        energy_costs, done = self._energy_curve.get_next_batch()
+
+        if self._state["time_of_day"] != 0:
+            self._add_new_cars()
+        energy_costs = self._energy_curve.get_next_batch()
 
         return time_step.TimeStep(
-            step_type=time_step.StepType.MID if not done else time_step.StepType.LAST,
+            step_type=time_step.StepType.MID if self._state["step"] < 720 else time_step.StepType.LAST,
             reward=np.array(reward, dtype=np.float32),
-            discount=np.array(1.0, dtype=np.float32),
+            discount=np.array(discount, dtype=np.float32),
             observation=np.array(
                 [
                     *energy_costs,
@@ -200,7 +203,7 @@ class V2GEnvironment(PyEnvironment):
 
     def _add_new_cars(self):
         day_coefficient = math.sin(math.pi / 12 * self._state["time_of_day"]) / 2 + 0.5
-        new_cars = max(0, int(np.random.normal(20 * day_coefficient, 2 * day_coefficient)))
+        new_cars = max(0, int(np.random.normal(10 * day_coefficient, 2 * day_coefficient)))
         try:
             for _ in range(new_cars):
                 v = self._create_vehicle()
@@ -209,7 +212,7 @@ class V2GEnvironment(PyEnvironment):
             print("Parking is full no more cars added")
 
     def _create_vehicle(self):
-        total_stay = random.randint(7, 10)
+        total_stay = min(24 - self._state["time_of_day"], random.randint(7, 10))
         min_charge = 0
         max_charge = 60
         initial_charge = round(6 + random.random() * 20, 3)

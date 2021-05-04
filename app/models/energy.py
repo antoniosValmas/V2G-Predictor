@@ -1,5 +1,6 @@
 from typing import List, Tuple
 import datetime
+import random
 
 
 class EnergyCurve:
@@ -10,24 +11,30 @@ class EnergyCurve:
         data (`Tuple(datetime, float)[]`) :
             description: The raw data array. Each point consists of the timestamp and the cost of energy
     """
-    _data: List[Tuple[datetime.datetime, float]] = []
-    _x: List[datetime.datetime]
     _y: List[float]
     _start: int = 0
     _end: int = 24
 
-    def __init__(self, dataFile: str):
-        self._data = []
-        self._x = []
-        self._y = []
+    def __init__(self, dataFile: str, name: str):
+        self._data: List[Tuple[datetime.datetime, float]] = []
+        self._x: List[datetime.datetime] = []
+        self._raw_y: List[List[float]] = [[]]
+        self._y: List[float] = []
         with open(dataFile) as csv:
+            counter = 0
             for line in csv.readlines():
-                date, value = line.split(',')
-                date = datetime.datetime.strptime(date, '%Y-%m-%d %H:%M:%S')
+                date, value = line.split(",")
+                date = datetime.datetime.strptime(date, "%Y-%m-%d %H:%M:%S")
                 value = float(value)
                 self._data.append((date, value))
                 self._x.append(date)
-                self._y.append(value)
+                if counter == 24:
+                    counter = 0
+                    self._raw_y.append([])
+                self._raw_y[-1].append(value)
+                counter += 1
+        self.name = name
+        self.randomize_data(self.name == 'eval')
 
     def get_raw_data(self):
         """
@@ -70,15 +77,24 @@ class EnergyCurve:
             self._start += 1
             self._end += 1
         else:
-            print('Done')
-        return (ret, len(self._data) == self._end)
+            self.reset()
+
+        return ret
 
     def reset(self):
         self._start = 0
         self._end = 24
+        self.randomize_data(self.name == 'eval')
 
     def get_current_cost(self):
         """
         Get current energy cost
         """
         return self._y[self._start - 1]
+
+    def randomize_data(self, is_eval):
+        if is_eval:
+            self._y = [val for _, val in self._data]
+        else:
+            random.shuffle(self._raw_y)
+            self._y = [item for sublist in self._raw_y for item in sublist]
