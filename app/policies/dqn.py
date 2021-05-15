@@ -9,7 +9,6 @@ import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
 from tf_agents.agents.dqn import dqn_agent
-from tf_agents.drivers import dynamic_step_driver
 from tf_agents.environments import tf_py_environment
 from tf_agents.networks import sequential
 from tf_agents.policies import random_tf_policy, policy_saver
@@ -20,18 +19,18 @@ from tf_agents.trajectories import trajectory
 
 
 class DQNPolicy:
-    num_iterations = 21600  # @param {type:"integer"}
+    num_iterations = 24 * 30 * 50  # @param {type:"integer"}
 
-    initial_collect_steps = 24 * 30  # @param {type:"integer"}
+    initial_collect_steps = 24 * 5  # @param {type:"integer"}
     collect_steps_per_iteration = 1  # @param {type:"integer"}
     replay_buffer_max_length = 100000  # @param {type:"integer"}
 
-    batch_size = 1  # @param {type:"integer"}
+    batch_size = 64  # @param {type:"integer"}
     learning_rate = 1e-3  # @param {type:"number"}
     log_interval = 24  # @param {type:"integer"}
 
-    num_eval_episodes = 2  # @param {type:"integer"}
-    eval_interval = 24 * 30 * 3  # @param {type:"integer"}
+    num_eval_episodes = 30  # @param {type:"integer"}
+    eval_interval = 24 * 30 * 5  # @param {type:"integer"}
 
     train_dir = "checkpoints"
 
@@ -49,17 +48,17 @@ class DQNPolicy:
             [
                 layers.Dense(
                     units=30,
-                    activation=keras.activations.relu,
+                    activation='elu'
                 ),
-                layers.Dense(units=128, activation=keras.activations.relu),
+                layers.Dense(units=512, activation='elu'),
                 layers.BatchNormalization(),
-                layers.Dense(units=128, activation=keras.activations.relu),
+                layers.Dropout(0.4),
+                layers.Dense(units=512, activation='elu'),
                 layers.BatchNormalization(),
-                layers.Dense(units=128, activation=keras.activations.relu),
-                layers.BatchNormalization(),
+                layers.Dropout(0.5),
                 layers.Dense(
                     num_actions,
-                    activation=keras.activations.softmax,
+                    activation=None,
                 ),
             ]
         )
@@ -114,26 +113,19 @@ class DQNPolicy:
         self.eval_env.reset()
 
     def train(self, load_policy=None):
-        self.collect_data(self.train_env, self.random_policy, self.initial_collect_steps)
+        print('Collect Step')
+        self.collect_data(self.train_env, self.agent.policy, self.initial_collect_steps)
         self.agent.train = common.function(self.agent.train)
         self.agent.train_step_counter.assign(0)
-        avg_return = compute_avg_return(self.eval_env, self.random_policy, self.num_eval_episodes)
+        print('Compute Average Return')
+        # avg_return = compute_avg_return(self.eval_env, self.random_policy, self.num_eval_episodes)
         self.raw_eval_env.reset_metrics()
-        returns = [avg_return]
-
-        collect_op = dynamic_step_driver.DynamicStepDriver(
-            self.train_env,
-            self.agent.collect_policy,
-            observers=[self.replay_buffer.add_batch],
-            num_steps=self.collect_steps_per_iteration,
-        )
+        returns = []
 
         for _ in range(self.num_iterations):
 
             try:
-                time_step, _ = collect_op.run()
-                if time_step.is_last():
-                    self.train_env.reset()
+                self.collect_data(self.train_env, self.agent.policy, 1)
 
                 # Sample a batch of data from the buffer and update the agent's network.
                 experience, _ = next(self.iterator)
@@ -142,8 +134,8 @@ class DQNPolicy:
                 step = self.agent.train_step_counter.numpy()
 
                 if step % self.log_interval == 0:
-                    remainder = (step - 1) % self.eval_interval
-                    percentage = (remainder * 90) // self.eval_interval
+                    remainder = step % self.eval_interval
+                    percentage = ((remainder if remainder != 0 else self.eval_interval) * 90) // self.eval_interval
                     sys.stdout.write('\r')
                     sys.stdout.write('\033[K')
                     sys.stdout.write(f'[{"=" * percentage + " " * (90 - percentage)}] loss: {train_loss} ')
@@ -154,8 +146,10 @@ class DQNPolicy:
                     print("step = {0}: Average Return = {1}".format(step, avg_return))
                     returns.append(avg_return)
 
-                    metrics_visualization(self.raw_eval_env.get_metrics(), step // self.eval_interval)
+                    metrics_visualization(self.raw_eval_env.get_metrics(), step // self.eval_interval, 'dqn')
                     self.raw_eval_env.reset_metrics()
+
+                    # self.collect_data(self.train_env, self.random_policy, self.initial_collect_steps)
 
             except ValueError as e:
                 print(self.train_env.current_time_step())
@@ -169,6 +163,8 @@ class DQNPolicy:
         action_step = policy.action(time_step)
         next_time_step = environment.step(action_step.action)
         traj = trajectory.from_transition(time_step, action_step, next_time_step)
+        if next_time_step.is_last():
+            environment.reset()
         # Add trajectory to the replay buffer
         self.replay_buffer.add_batch(traj)
 

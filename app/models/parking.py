@@ -252,9 +252,13 @@ class Parking:
                 description: The charging coefficient
         """
         avg_charge_levels = self.update_energy_state(charging_coefficient)
+        state_of_charge = [
+            ((v.get_current_charge() - v.get_original_target_charge()) / v.get_original_target_charge())
+            for v in self._vehicles
+        ]
         metrics = self.depart_vehicles()
         self._update_parking_state()
-        return avg_charge_levels, metrics
+        return avg_charge_levels, (*metrics, state_of_charge)
 
     def toJson(self) -> Dict[str, Any]:
         return {

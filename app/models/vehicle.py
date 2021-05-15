@@ -1,4 +1,4 @@
-from app.utils import find_intersection
+from app.utils import find_intersection_v2
 import json
 import numpy as np
 import math
@@ -193,55 +193,58 @@ class Vehicle:
         From the above it is obvious that the following is true for the two priorities:
         ``charging_priority = 1 - discharging_priority``
         """
-        x_axes = range(0, self._time_before_departure + 1)
-        max_curve, min_curve = self._calculate_charge_curves()
-        current_charge_line = [self._current_charge for _ in x_axes]
+        try:
+            x_axes = range(0, self._time_before_departure + 1)
+            max_curve, min_curve = self._calculate_charge_curves()
 
-        max_curve_area: float = np.trapz(max_curve)
-        min_curve_area: float = np.trapz(min_curve)
-        diff_curve_area = max_curve_area - min_curve_area
+            max_curve_area: float = np.trapz(max_curve)
+            min_curve_area: float = np.trapz(min_curve)
+            diff_curve_area = max_curve_area - min_curve_area
 
-        max_intersection = find_intersection(x_axes[1:], max_curve[1:], x_axes[1:], current_charge_line[1:])
-        min_intersection = find_intersection(x_axes[1:], min_curve[1:], x_axes[1:], current_charge_line[1:])
+            max_intersection = find_intersection_v2(x_axes, max_curve, self._current_charge)
+            min_intersection = find_intersection_v2(x_axes, min_curve, self._current_charge)
 
-        intersection = max_intersection or min_intersection
+            intersection = max_intersection or min_intersection
 
-        if (intersection is None) and (self._current_charge == self._target_charge):
-            intersection = (float(self._time_before_departure), self._current_charge)
+            if (intersection is None) and (self._current_charge == self._target_charge):
+                intersection = (float(self._time_before_departure), self._current_charge)
 
-        if intersection is not None and math.isnan(intersection[0]) and math.isnan(intersection[1]):
-            print("Warning: NaN intersection found")
-            print(x_axes, max_curve, min_curve, current_charge_line)
+            if intersection is not None and math.isnan(intersection[0]) and math.isnan(intersection[1]):
+                print("Warning: NaN intersection found")
+                print(x_axes, max_curve, min_curve)
 
-        if intersection is None:
-            diff = self._current_charge - self._target_charge
-            self._charge_priority = 0.0 if diff > 0 else 1.0
-            self._discharge_priority = 1.0 if diff > 0 else 0.0
-        elif diff_curve_area == 0 and intersection is not None:
-            self._charge_priority = 0.5
-            self._discharge_priority = 0.5
-        else:
-            inter_x, inter_y = intersection
-            cutoff_index = math.ceil(inter_x)
-            partial_min_curve = min_curve[:cutoff_index]
-            partial_min_curve.append(inter_y)
-            partial_x_axes = list(range(0, cutoff_index))
-            partial_x_axes.append(inter_x)
+            if intersection is None:
+                diff = self._current_charge - self._target_charge
+                self._charge_priority = 0.0 if diff > 0 else 1.0
+                self._discharge_priority = 1.0 if diff > 0 else 0.0
+            elif diff_curve_area == 0 and intersection is not None:
+                self._charge_priority = 0.5
+                self._discharge_priority = 0.5
+            else:
+                inter_x, inter_y = intersection
+                cutoff_index = math.ceil(inter_x)
+                partial_min_curve = min_curve[:cutoff_index]
+                partial_min_curve.append(inter_y)
+                partial_x_axes = list(range(0, cutoff_index))
+                partial_x_axes.append(inter_x)
 
-            current_charge_area: float = np.trapz([self._current_charge, inter_y], [0, inter_x])
-            area_bellow: float = np.trapz(partial_min_curve, partial_x_axes)
+                current_charge_area: float = np.trapz([self._current_charge, inter_y], [0, inter_x])
+                area_bellow: float = np.trapz(partial_min_curve, partial_x_axes)
 
-            discharge_area = current_charge_area - area_bellow
-            self._discharge_priority = round(discharge_area / diff_curve_area, 3)
-            self._charge_priority = round(1 - self._discharge_priority, 3)
+                discharge_area = current_charge_area - area_bellow
+                self._discharge_priority = round(discharge_area / diff_curve_area, 3)
+                self._charge_priority = round(1 - self._discharge_priority, 3)
 
-        self._charge_priority /= max(1, self._time_before_departure - 2)
-        self._discharge_priority /= max(1, self._time_before_departure - 2)
+            self._charge_priority /= max(1, self._time_before_departure - 2)
+            self._discharge_priority /= max(1, self._time_before_departure - 2)
+        except ValueError as e:
+            print(x_axes, max_curve, min_curve)
+            raise e
 
         if math.isnan(self._discharge_priority):
             print("Warning: Nan priorities found")
             print(intersection)
-            print(x_axes, max_curve, min_curve, current_charge_line)
+            print(x_axes, max_curve, min_curve)
             print(discharge_area, diff_curve_area, current_charge_area, area_bellow)
 
     def update(self):

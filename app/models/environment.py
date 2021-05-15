@@ -1,14 +1,17 @@
+# from app.policies.utils import sigmoid
 import json
-from typing import Any, Dict
-from app.models.energy import EnergyCurve
-from app.error_handling import ParkingIsFull
+from typing import Any, Dict, List
 import numpy as np
 import random
 import math
+
+# import statistics
 from tf_agents.environments.py_environment import PyEnvironment
 from tf_agents.specs import array_spec
 from tf_agents.trajectories import time_step
 
+from app.models.energy import EnergyCurve
+from app.error_handling import ParkingIsFull
 from app.models.parking import Parking
 from app.models.vehicle import Vehicle
 
@@ -20,7 +23,7 @@ class V2GEnvironment(PyEnvironment):
     _battery_cost = 120
     _battery_capacity = 60
 
-    def __init__(self, capacity: int, dataFile: str, name: str):
+    def __init__(self, capacity: int, dataFile: str, name: str, vehicle_distribution: List[List[int]] = None):
         self._action_spec = array_spec.BoundedArraySpec(
             shape=(), dtype=np.int32, minimum=0, maximum=self._length - 1, name="action"
         )
@@ -37,6 +40,7 @@ class V2GEnvironment(PyEnvironment):
         self._state = {
             "time_of_day": 0,
             "step": 0,
+            "global_step": 0,
             "metrics": {
                 "loss": [],
                 "num_of_vehicles": [],
@@ -48,8 +52,10 @@ class V2GEnvironment(PyEnvironment):
                 "age_degradation": [],
             },
         }
+        self._capacity = capacity
         self._parking = Parking(capacity, name)
         self._energy_curve = EnergyCurve(dataFile, name)
+        self._vehicle_distribution = vehicle_distribution
         self._add_new_cars()
         self._reset()
 
@@ -88,11 +94,12 @@ class V2GEnvironment(PyEnvironment):
             discount=np.array(0, dtype=np.float32),
             observation=np.array(
                 [
-                    *energy_costs,
-                    self._parking.get_next_max_charge() / self._parking.get_max_charging_rate(),
-                    self._parking.get_next_min_charge() / self._parking.get_max_charging_rate(),
-                    self._parking.get_next_max_discharge() / self._parking.get_max_discharging_rate(),
-                    self._parking.get_next_min_discharge() / self._parking.get_max_discharging_rate(),
+                    *energy_costs[:12],
+                    *self._calculate_vehicle_distribution(),
+                    self._parking.get_next_max_charge() / self._parking.get_max_charging_rate() / self._capacity,
+                    self._parking.get_next_min_charge() / self._parking.get_max_charging_rate() / self._capacity,
+                    self._parking.get_next_max_discharge() / self._parking.get_max_discharging_rate() / self._capacity,
+                    self._parking.get_next_min_discharge() / self._parking.get_max_discharging_rate() / self._capacity,
                     self._parking.get_charge_mean_priority(),
                     self._parking.get_discharge_mean_priority(),
                 ],
@@ -107,7 +114,6 @@ class V2GEnvironment(PyEnvironment):
 
         num_of_vehicles = len(self._parking._vehicles)
         reward = 0.0
-        discount = 0.01
 
         self._state["metrics"]["cost"].append(0)
         self._state["metrics"]["unmet_demand"].append(0)
@@ -126,7 +132,9 @@ class V2GEnvironment(PyEnvironment):
                 min_discharge = self._parking.get_next_min_discharge()
                 max_rate = self._battery_capacity * num_of_vehicles
 
-                avg_charge_levels, (met_demand, overcharged_time) = self._parking.update(charging_coefficient)
+                avg_charge_levels, (met_demand, overcharged_time, state_of_charge) = self._parking.update(
+                    charging_coefficient
+                )
 
                 cost = int(available_energy * current_cost * 100)
                 unmet_demand = int(
@@ -138,13 +146,22 @@ class V2GEnvironment(PyEnvironment):
                     * current_cost
                     * 100
                 )
-                cycle_degradation_cost = int(
+
+                # state_of_charge_mean = statistics.mean(state_of_charge)
+                # state_of_charge_variance = (
+                #     statistics.variance(state_of_charge, state_of_charge_mean) if len(state_of_charge) > 1 else 1
+                # )
+
+                # unmet_demand = (10 * abs(state_of_charge_mean)) ** 2 + 5 * state_of_charge_variance
+
+                cycle_degradation_cost = (
                     self.cycle_degradation(abs(available_energy) / max_rate)
                     * self._battery_capacity
                     * self._battery_cost
                     * num_of_vehicles
                     * 100
-                )
+                ) if is_charging else 0
+
                 age_degradation_cost = 0.0
                 for charge_level in avg_charge_levels:
                     age_degradation_cost += (
@@ -154,9 +171,10 @@ class V2GEnvironment(PyEnvironment):
                     )
                 age_degradation_cost = int(age_degradation_cost * 100)
 
-                reward = -cost - unmet_demand ** 2 - cycle_degradation_cost - age_degradation_cost
+                reward = -cost - unmet_demand ** 1.5 - cycle_degradation_cost - age_degradation_cost
+                # reward = -cost - unmet_demand - cycle_degradation_cost - age_degradation_cost
+                # reward = sigmoid(reward)
 
-                discount += min(0.99, 0.99 * unmet_demand / 200)
                 # Update metrics
                 self._state["metrics"]["cost"][-1] = cost
                 self._state["metrics"]["unmet_demand"][-1] = unmet_demand
@@ -178,22 +196,24 @@ class V2GEnvironment(PyEnvironment):
         self._state["time_of_day"] += 1
         self._state["time_of_day"] %= 24
         self._state["step"] += 1
+        self._state["global_step"] += 1
 
         if self._state["time_of_day"] != 0:
             self._add_new_cars()
         energy_costs = self._energy_curve.get_next_batch()
 
         return time_step.TimeStep(
-            step_type=time_step.StepType.MID if self._state["step"] < 720 else time_step.StepType.LAST,
+            step_type=time_step.StepType.MID if self._state["step"] < 24 else time_step.StepType.LAST,
             reward=np.array(reward, dtype=np.float32),
-            discount=np.array(discount, dtype=np.float32),
+            discount=np.array(0.9, dtype=np.float32),
             observation=np.array(
                 [
-                    *energy_costs,
-                    self._parking.get_next_max_charge() / self._parking.get_max_charging_rate(),
-                    self._parking.get_next_min_charge() / self._parking.get_max_charging_rate(),
-                    self._parking.get_next_max_discharge() / self._parking.get_max_discharging_rate(),
-                    self._parking.get_next_min_discharge() / self._parking.get_max_discharging_rate(),
+                    *energy_costs[:12],
+                    *self._calculate_vehicle_distribution(),
+                    self._parking.get_next_max_charge() / self._parking.get_max_charging_rate() / self._capacity,
+                    self._parking.get_next_min_charge() / self._parking.get_max_charging_rate() / self._capacity,
+                    self._parking.get_next_max_discharge() / self._parking.get_max_discharging_rate() / self._capacity,
+                    self._parking.get_next_min_discharge() / self._parking.get_max_discharging_rate() / self._capacity,
                     self._parking.get_charge_mean_priority(),
                     self._parking.get_discharge_mean_priority(),
                 ],
@@ -201,18 +221,48 @@ class V2GEnvironment(PyEnvironment):
             ),
         )
 
-    def _add_new_cars(self):
-        day_coefficient = math.sin(math.pi / 12 * self._state["time_of_day"]) / 2 + 0.5
-        new_cars = max(0, int(np.random.normal(10 * day_coefficient, 2 * day_coefficient)))
-        try:
-            for _ in range(new_cars):
-                v = self._create_vehicle()
-                self._parking.assign_vehicle(v)
-        except ParkingIsFull:
-            print("Parking is full no more cars added")
+    def _calculate_vehicle_distribution(self):
+        vehicle_departure_distribution = [0 for _ in range(12)]
+        for v in self._parking._vehicles:
+            vehicle_departure_distribution[v.get_time_before_departure() - 1] += 1
 
-    def _create_vehicle(self):
-        total_stay = min(24 - self._state["time_of_day"], random.randint(7, 10))
+        currentFreq = 0
+        length = len(vehicle_departure_distribution)
+        for i, f in enumerate(reversed(vehicle_departure_distribution)):
+            if f != 0:
+                currentFreq += f
+            vehicle_departure_distribution[length - i - 1] = currentFreq
+
+        return list(map(lambda x: x / self._capacity, vehicle_departure_distribution))
+
+    def _add_new_cars(self):
+        if self._state["time_of_day"] > 20:
+            return
+
+        if self._vehicle_distribution:
+            new_cars = self._vehicle_distribution[self._state["global_step"]]
+            try:
+                for total_stay in new_cars:
+                    v = self._create_vehicle(total_stay)
+                    self._parking.assign_vehicle(v)
+            except ParkingIsFull:
+                print("Parking is full no more cars added")
+        else:
+            day_coefficient = math.sin(math.pi / 12 * self._state["time_of_day"]) / 2 + 0.5
+            new_cars = max(0, int(np.random.normal(10 * day_coefficient, 2 * day_coefficient)))
+            try:
+                for _ in range(new_cars):
+                    v = self._create_vehicle()
+                    self._parking.assign_vehicle(v)
+            except ParkingIsFull:
+                print("Parking is full no more cars added")
+
+    def _create_vehicle(self, total_stay_override=None):
+        total_stay = (
+            min(24 - self._state["time_of_day"], random.randint(7, 10))
+            if not total_stay_override
+            else total_stay_override
+        )
         min_charge = 0
         max_charge = 60
         initial_charge = round(6 + random.random() * 20, 3)
@@ -232,7 +282,8 @@ class V2GEnvironment(PyEnvironment):
         ### Returns
             float : the total lost capacity
         """
-        return 4.14e-10 * 3600 * pow(math.e, (1.04 * (soc - 0.5)))
+        # return 4.14e-10 * 3600 * pow(math.e, (1.04 * (soc - 0.5)))
+        return (0.09 * soc + 0.02) / 900 / 24
 
     def toJson(self) -> Dict[str, Any]:
         return {"name": self._name, "parking": self._parking.toJson()}

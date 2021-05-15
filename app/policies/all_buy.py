@@ -5,7 +5,6 @@ from tf_agents.trajectories.policy_step import PolicyStep
 
 class AllBuy:
     min_charge_idx = 25
-    min_discharge_idx = 27
     actions_length = 10
 
     def __init__(self, threshold):
