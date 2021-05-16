@@ -147,13 +147,12 @@ class Parking:
         """
         departed_vehicles = list(filter(lambda v: v.get_time_before_departure() == 0, self._vehicles))
         self._vehicles = list(filter(lambda v: v.get_time_before_departure() != 0, self._vehicles))
-        met_demand = []
+
         overcharged_time = []
         for v in departed_vehicles:
-            met_demand.append((v.get_target_charge() - v.get_original_target_charge()) / v.get_original_target_charge())
             overcharged_time.append(v.get_overchared_time())
 
-        return met_demand, overcharged_time
+        return overcharged_time
 
     def _update_parking_state(self):
         self._next_max_charge = 0.0
@@ -209,39 +208,30 @@ class Parking:
         is_charging = charging_coefficient > 0
         sign = 1 if is_charging else -1
         next_energy_diff = self._next_max_charge if is_charging else self._next_max_discharge
-        next_minimum_req = self._next_min_charge if is_charging else self._next_min_discharge
 
         available_energy = next_energy_diff * abs(charging_coefficient)
 
-        min_energy = Vehicle.get_next_min_charge if is_charging else Vehicle.get_next_min_discharge
         priority = Vehicle.get_charge_priority if is_charging else Vehicle.get_discharge_priority
         normalization_constant = (
             self._normalization_charge_constant if is_charging else self._normalization_discharge_constant
         )
 
-        priority_sorted_vehicles = sorted(self._vehicles, key=lambda v: priority(v), reverse=True)
-
-        met_demand_coefficient = min(1, available_energy / next_minimum_req) if next_minimum_req != 0 else 0
-
-        for vehicle in priority_sorted_vehicles:
-            normalized_energy = met_demand_coefficient * min_energy(vehicle)
-            vehicle.update_emergency_demand(min(available_energy, normalized_energy), is_charging)
-            available_energy = max(0, available_energy - normalized_energy)
-
         charging_coefficient = round(available_energy / next_energy_diff, 3) if next_energy_diff != 0 else 0
         residue = 0.0
         avg_charge_levels: List[float] = []
+        degrade_rates: List[float] = []
         for vehicle in sorted(
             self._vehicles,
             key=lambda v: charging_coefficient * (1 + priority(v) - normalization_constant),
             reverse=True,
         ):
-            avg_charge_level, residue = vehicle.update_current_charge(
+            avg_charge_level, degrade_rate, residue = vehicle.update_current_charge(
                 sign * charging_coefficient, normalization_constant, residue
             )
+            degrade_rates.append(degrade_rate)
             avg_charge_levels.append(avg_charge_level)
 
-        return avg_charge_levels
+        return avg_charge_levels, degrade_rates
 
     def update(self, charging_coefficient):
         """
@@ -251,14 +241,10 @@ class Parking:
             charging_coefficient (``float``) :
                 description: The charging coefficient
         """
-        avg_charge_levels = self.update_energy_state(charging_coefficient)
-        state_of_charge = [
-            ((v.get_current_charge() - v.get_original_target_charge()) / v.get_original_target_charge())
-            for v in self._vehicles
-        ]
-        metrics = self.depart_vehicles()
+        avg_charge_levels, degrade_rates = self.update_energy_state(charging_coefficient)
+        overcharged_time = self.depart_vehicles()
         self._update_parking_state()
-        return avg_charge_levels, (*metrics, state_of_charge)
+        return avg_charge_levels, degrade_rates, overcharged_time
 
     def toJson(self) -> Dict[str, Any]:
         return {

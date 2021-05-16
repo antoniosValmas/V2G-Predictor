@@ -3,6 +3,7 @@ import json
 import numpy as np
 import math
 from typing import Any, Dict
+import config
 
 
 class Vehicle:
@@ -282,18 +283,21 @@ class Vehicle:
         next_max_energy = self._next_max_charge if is_charging else self._next_max_discharge
         sign = 1 if is_charging else -1
 
+        before_charge = self._current_charge
+        self.update_emergency_demand()
+
         new_vehicle_energy = (
             next_max_energy * charging_coefficient * (1 + priority - normalization_constant) + residue_energy
         )
         residue = max(0, new_vehicle_energy * sign - next_max_energy) * sign
 
-        new_current_charge = round(
+        self._current_charge = round(
             self._current_charge + new_vehicle_energy - residue,
             3,
         )
 
-        avg_charge_level = (new_current_charge + self._current_charge) / 2
-        self._current_charge = new_current_charge
+        avg_charge_level = (before_charge + self._current_charge) / 2
+        degrade_rate = max(0, (self._current_charge - before_charge) / config.BATTERY_CAPACITY)
 
         self._time_before_departure -= 1
         if (self._current_charge / self._max_charge) > 0.5:
@@ -307,30 +311,13 @@ class Vehicle:
         if self._time_before_departure != 0:
             self.update()
 
-        return avg_charge_level, residue
+        return avg_charge_level, degrade_rate, residue
 
-    def update_emergency_demand(self, energy: float, is_charging: bool):
+    def update_emergency_demand(self):
         """
         Satisfy the minimum demand of the vehicle
-
-        ### Arguments:
-            energy (``float``) :
-                description: The energy to satisfy the minimum needs
-            is_charging (``bool``) :
-                description: Whether the action is charging or discharging
         """
-        if is_charging:
-            self._target_charge -= self._next_min_charge - energy
-            self._target_charge += self._next_min_discharge
-            self._current_charge += energy
-        else:
-            self._target_charge += self._next_min_discharge - energy
-            self._target_charge -= self._next_min_charge
-            self._current_charge -= energy
-
-        if math.isnan(self._target_charge) or math.isnan(self._current_charge):
-            print("Warning: NaN values found on update_emergency_demand")
-            print(self._target_charge, self._current_charge, energy, is_charging)
+        self._current_charge = self._current_charge + self._next_min_charge - self._next_min_discharge
 
     def get_current_charge(self):
         """

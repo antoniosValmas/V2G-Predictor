@@ -47,7 +47,7 @@ class DQNPolicy:
         self.q_net = sequential.Sequential(
             [
                 layers.Dense(
-                    units=30,
+                    units=33,
                     activation='elu'
                 ),
                 layers.Dense(units=512, activation='elu'),

@@ -4,7 +4,7 @@ from tf_agents.trajectories.policy_step import PolicyStep
 
 
 class AllBuy:
-    min_charge_idx = 25
+    min_charge_idx = 28
     actions_length = 10
 
     def __init__(self, threshold):
@@ -12,14 +12,16 @@ class AllBuy:
 
     def action(self, timestep: TimeStep) -> PolicyStep:
         observation = timestep.observation.numpy()[0]
-        good_price = observation[0] < self.threshold
+        current_price = observation[3]
+        good_price = current_price < self.threshold
         coefficient = 0.0
 
         if good_price:
-            coefficient = 1 - observation[0] / self.threshold
+            coefficient = 1 - current_price / self.threshold
 
-        if observation[self.min_charge_idx] > 0:
-            needed_demand = observation[self.min_charge_idx] / observation[self.min_charge_idx - 1]
+        min_charge = observation[self.min_charge_idx]
+        if min_charge > 0:
+            needed_demand = min_charge / observation[self.min_charge_idx - 1]
             coefficient = max(coefficient, needed_demand)
 
         if (coefficient > 1):
