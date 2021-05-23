@@ -52,6 +52,7 @@ class Vehicle:
         self._charge_priority = 0.0
         self._discharge_priority = 0.0
         self.name = name
+        self._before_charge = 0.0
 
         self._overcharged_time = 0
         self._original_target_charge = target_charge
@@ -190,6 +191,7 @@ class Vehicle:
         - The discharging priority is calculated as the ratio of
             - the area below the y = current_charge line that is part of the "max/min area"
             - and the "max/min area"
+        - If area is equal to zero and next_max_charge = next_max_discharge = 0 then both priorities are equal to 0
 
         From the above it is obvious that the following is true for the two priorities:
         ``charging_priority = 1 - discharging_priority``
@@ -219,8 +221,8 @@ class Vehicle:
                 self._charge_priority = 0.0 if diff > 0 else 1.0
                 self._discharge_priority = 1.0 if diff > 0 else 0.0
             elif diff_curve_area == 0 and intersection is not None:
-                self._charge_priority = 0.5
-                self._discharge_priority = 0.5
+                self._charge_priority = 0
+                self._discharge_priority = 0
             else:
                 inter_x, inter_y = intersection
                 cutoff_index = math.ceil(inter_x)
@@ -283,24 +285,25 @@ class Vehicle:
         next_max_energy = self._next_max_charge if is_charging else self._next_max_discharge
         sign = 1 if is_charging else -1
 
-        before_charge = self._current_charge
-        self.update_emergency_demand()
-
         new_vehicle_energy = (
             next_max_energy * charging_coefficient * (1 + priority - normalization_constant) + residue_energy
         )
-        residue = max(0, new_vehicle_energy * sign - next_max_energy) * sign
+        residue = max(0, abs(new_vehicle_energy) - next_max_energy) * sign
 
         self._current_charge = round(
             self._current_charge + new_vehicle_energy - residue,
             3,
         )
 
-        avg_charge_level = (before_charge + self._current_charge) / 2
-        degrade_rate = max(0, (self._current_charge - before_charge) / config.BATTERY_CAPACITY)
+        avg_charge_level = (self._before_charge + self._current_charge) / 2
+        degrade_rate = (self._current_charge - self._before_charge) / config.BATTERY_CAPACITY
+        if abs(degrade_rate) > 1:
+            print(self._current_charge, self._before_charge, config.BATTERY_CAPACITY)
+            print(new_vehicle_energy, residue, residue_energy, charging_coefficient)
+            print(self)
 
         self._time_before_departure -= 1
-        if (self._current_charge / self._max_charge) > 0.5:
+        if (self._current_charge / config.BATTERY_CAPACITY) > 0.5:
             self._overcharged_time += 1
 
         if math.isnan(avg_charge_level) or math.isnan(residue) or math.isnan(self._current_charge):
@@ -317,7 +320,12 @@ class Vehicle:
         """
         Satisfy the minimum demand of the vehicle
         """
+        self._before_charge = self._current_charge
         self._current_charge = self._current_charge + self._next_min_charge - self._next_min_discharge
+        self._next_max_charge -= self._next_min_charge
+        self._next_max_discharge -= self._next_min_discharge
+        self._next_min_charge = 0
+        self._next_min_discharge = 0
 
     def get_current_charge(self):
         """

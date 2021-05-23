@@ -25,8 +25,8 @@ class Parking:
     _charge_mean_priority: float = 0.0
     _discharge_mean_priority: float = 0.0
     _current_charge: float = 0.0
-    _max_charging_rate = cfg.MAX_CHARGING_RATE
-    _max_discharging_rate = cfg.MAX_DISCHARGING_RATE
+    _max_charging_rate: int = cfg.MAX_CHARGING_RATE
+    _max_discharging_rate: int = cfg.MAX_DISCHARGING_RATE
 
     def __init__(self, capacity: int, name: str):
         _vehicles: List[Vehicle] = []
@@ -159,10 +159,6 @@ class Parking:
         self._next_min_charge = 0.0
         self._next_max_discharge = 0.0
         self._next_min_discharge = 0.0
-        self._charge_mean_priority = 0.0
-        self._discharge_mean_priority = 0.0
-        self._normalization_charge_constant = 0.0
-        self._normalization_discharge_constant = 0.0
         for vehicle in self._vehicles:
             next_max_charge = vehicle.get_next_max_charge()
             next_min_charge = vehicle.get_next_min_charge()
@@ -178,9 +174,6 @@ class Parking:
             self._charge_mean_priority += charge_priority
             self._discharge_mean_priority += discharge_priority
 
-            self._normalization_charge_constant += next_max_charge * charge_priority
-            self._normalization_discharge_constant += next_max_discharge * discharge_priority
-
         number_of_vehicles = len(self._vehicles)
 
         if number_of_vehicles == 0:
@@ -189,13 +182,26 @@ class Parking:
         self._charge_mean_priority = round(self._charge_mean_priority / number_of_vehicles, 3)
         self._discharge_mean_priority = round(self._discharge_mean_priority / number_of_vehicles, 3)
 
+    def _calculate_normalization_constant(self):
+        normalization_charge_constant = 0.0
+        normalization_discharge_constant = 0.0
+        for vehicle in self._vehicles:
+            next_max_charge = vehicle.get_next_max_charge()
+            next_max_discharge = vehicle.get_next_max_discharge()
+            charge_priority = vehicle.get_charge_priority()
+            discharge_priority = vehicle.get_discharge_priority()
+            normalization_charge_constant += next_max_charge * charge_priority
+            normalization_discharge_constant += next_max_discharge * discharge_priority
+
         if self._next_max_charge != 0:
-            self._normalization_charge_constant = round(self._normalization_charge_constant / self._next_max_charge, 3)
+            normalization_charge_constant = round(normalization_charge_constant / self._next_max_charge, 3)
 
         if self._next_max_discharge != 0:
-            self._normalization_discharge_constant = round(
-                self._normalization_discharge_constant / self._next_max_discharge, 3
+            normalization_discharge_constant = round(
+                normalization_discharge_constant / self._next_max_discharge, 3
             )
+
+        return normalization_charge_constant, normalization_discharge_constant
 
     def update_energy_state(self, charging_coefficient: float):
         """
@@ -207,27 +213,36 @@ class Parking:
         """
         is_charging = charging_coefficient > 0
         sign = 1 if is_charging else -1
-        next_energy_diff = self._next_max_charge if is_charging else self._next_max_discharge
-
-        available_energy = next_energy_diff * abs(charging_coefficient)
 
         priority = Vehicle.get_charge_priority if is_charging else Vehicle.get_discharge_priority
+
+        for vehicle in self._vehicles:
+            vehicle.update_emergency_demand()
+
+        self._next_max_charge -= self._next_min_charge
+        self._next_max_discharge -= self._next_min_discharge
+
+        normalization_charge_constant, normalization_discharge_constant = self._calculate_normalization_constant()
         normalization_constant = (
-            self._normalization_charge_constant if is_charging else self._normalization_discharge_constant
+            normalization_charge_constant if is_charging else normalization_discharge_constant
         )
 
-        charging_coefficient = round(available_energy / next_energy_diff, 3) if next_energy_diff != 0 else 0
         residue = 0.0
         avg_charge_levels: List[float] = []
         degrade_rates: List[float] = []
         for vehicle in sorted(
             self._vehicles,
-            key=lambda v: charging_coefficient * (1 + priority(v) - normalization_constant),
+            key=lambda v: sign * charging_coefficient * (1 + priority(v) - normalization_constant),
             reverse=True,
         ):
+            # print('Before')
+            # print(vehicle)
             avg_charge_level, degrade_rate, residue = vehicle.update_current_charge(
-                sign * charging_coefficient, normalization_constant, residue
+                charging_coefficient, normalization_constant, residue
             )
+            # print('After')
+            # print(vehicle)
+            # print(residue)
             degrade_rates.append(degrade_rate)
             avg_charge_levels.append(avg_charge_level)
 

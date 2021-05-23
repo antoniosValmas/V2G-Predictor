@@ -13,7 +13,7 @@ vehicles = create_vehicle_distribution()
 eval_env = V2GEnvironment(300, './data/GR-data-11-20.csv', 'eval', vehicles)
 
 dqn = DQNPolicy(train_env, eval_env)
-compute_avg_return(dqn.eval_env, dqn.agent.policy, 30 * 3)
+compute_avg_return(dqn.eval_env, dqn.agent.policy, 30 * 6)
 
 metrics_visualization(eval_env.get_metrics(), 0, 'dqn')
 
@@ -23,6 +23,6 @@ eval_env = V2GEnvironment(300, './data/GR-data-11-20.csv', 'eval', vehicles)
 tensor_eval_env = tf_py_environment.TFPyEnvironment(eval_env)
 
 all_buy = AllBuy(0.5)
-compute_avg_return(tensor_eval_env, all_buy, 30 * 3)
+compute_avg_return(tensor_eval_env, all_buy, 30 * 6)
 
 metrics_visualization(eval_env.get_metrics(), 0, 'all_buy')

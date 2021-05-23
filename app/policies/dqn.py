@@ -1,6 +1,6 @@
 from __future__ import absolute_import, division, print_function
 
-from app.policies.utils import compute_avg_return, metrics_visualization
+from app.policies.utils import compute_avg_return, metrics_visualization, plot_metric
 from app.models.environment import V2GEnvironment
 
 import sys
@@ -19,13 +19,13 @@ from tf_agents.trajectories import trajectory
 
 
 class DQNPolicy:
-    num_iterations = 24 * 30 * 50  # @param {type:"integer"}
+    num_iterations = 24 * 30 * 100  # @param {type:"integer"}
 
     initial_collect_steps = 24 * 5  # @param {type:"integer"}
     collect_steps_per_iteration = 1  # @param {type:"integer"}
     replay_buffer_max_length = 100000  # @param {type:"integer"}
 
-    batch_size = 64  # @param {type:"integer"}
+    batch_size = 128  # @param {type:"integer"}
     learning_rate = 1e-3  # @param {type:"number"}
     log_interval = 24  # @param {type:"integer"}
 
@@ -46,16 +46,13 @@ class DQNPolicy:
 
         self.q_net = sequential.Sequential(
             [
-                layers.Dense(
-                    units=33,
-                    activation='elu'
-                ),
-                layers.Dense(units=512, activation='elu'),
+                layers.Dense(units=33, activation="elu"),
+                layers.Dense(units=512, activation="elu"),
+                layers.BatchNormalization(),
+                layers.Dropout(0.3),
+                layers.Dense(units=512, activation="elu"),
                 layers.BatchNormalization(),
                 layers.Dropout(0.4),
-                layers.Dense(units=512, activation='elu'),
-                layers.BatchNormalization(),
-                layers.Dropout(0.5),
                 layers.Dense(
                     num_actions,
                     activation=None,
@@ -72,6 +69,7 @@ class DQNPolicy:
             optimizer=self.optimizer,
             td_errors_loss_fn=common.element_wise_squared_loss,
             train_step_counter=self.global_step,
+            target_update_tau=0.001
         )
 
         self.agent.initialize()
@@ -92,16 +90,18 @@ class DQNPolicy:
         )
 
         self.train_checkpointer = common.Checkpointer(
-            ckpt_dir=self.train_dir, agent=self.agent, global_step=self.global_step
-        )
-        self.rb_checkpointer = common.Checkpointer(
-            ckpt_dir=f"{self.train_dir}/replay_buffer", max_to_keep=1, replay_buffer=self.replay_buffer
+            ckpt_dir=self.train_dir,
+            max_to_keep=1,
+            agent=self.agent,
+            policy=self.agent.policy,
+            replay_buffer=self.replay_buffer,
+            global_step=self.global_step,
         )
 
         if self.train_checkpointer.checkpoint_exists:
-            print('Found Train Checkpoint')
+            print("Found Train Checkpoint")
+
         self.train_checkpointer.initialize_or_restore()
-        self.rb_checkpointer.initialize_or_restore()
 
         self.dataset = self.replay_buffer.as_dataset(
             num_parallel_calls=3, sample_batch_size=self.batch_size, num_steps=2
@@ -109,18 +109,16 @@ class DQNPolicy:
 
         self.iterator = iter(self.dataset)
 
+    def train(self, load_policy=None):
         self.train_env.reset()
         self.eval_env.reset()
+        print("Collect Step")
 
-    def train(self, load_policy=None):
-        print('Collect Step')
         self.collect_data(self.train_env, self.agent.policy, self.initial_collect_steps)
         self.agent.train = common.function(self.agent.train)
-        self.agent.train_step_counter.assign(0)
-        print('Compute Average Return')
-        # avg_return = compute_avg_return(self.eval_env, self.random_policy, self.num_eval_episodes)
         self.raw_eval_env.reset_metrics()
         returns = []
+        loss = []
 
         for _ in range(self.num_iterations):
 
@@ -130,14 +128,15 @@ class DQNPolicy:
                 # Sample a batch of data from the buffer and update the agent's network.
                 experience, _ = next(self.iterator)
                 train_loss = self.agent.train(experience).loss
+                loss.append(train_loss)
 
                 step = self.agent.train_step_counter.numpy()
 
                 if step % self.log_interval == 0:
                     remainder = step % self.eval_interval
                     percentage = ((remainder if remainder != 0 else self.eval_interval) * 90) // self.eval_interval
-                    sys.stdout.write('\r')
-                    sys.stdout.write('\033[K')
+                    sys.stdout.write("\r")
+                    sys.stdout.write("\033[K")
                     sys.stdout.write(f'[{"=" * percentage + " " * (90 - percentage)}] loss: {train_loss} ')
                     sys.stdout.flush()
 
@@ -146,7 +145,7 @@ class DQNPolicy:
                     print("step = {0}: Average Return = {1}".format(step, avg_return))
                     returns.append(avg_return)
 
-                    metrics_visualization(self.raw_eval_env.get_metrics(), step // self.eval_interval, 'dqn')
+                    metrics_visualization(self.raw_eval_env.get_metrics(), step // self.eval_interval, "dqn")
                     self.raw_eval_env.reset_metrics()
 
                     # self.collect_data(self.train_env, self.random_policy, self.initial_collect_steps)
@@ -156,9 +155,10 @@ class DQNPolicy:
                 raise e
 
         self.train_checkpointer.save(global_step=self.global_step.numpy())
-        self.rb_checkpointer.save(global_step=self.global_step.numpy())
+        plot_metric(returns, 'Average Returns', 'plots/raw_dqn')
+        plot_metric(loss, 'Training Loss', 'plots/raw_dqn', log_scale=True)
 
-    def collect_step(self, environment, policy):
+    def collect_step(self, environment: tf_py_environment.TFPyEnvironment, policy):
         time_step = environment.current_time_step()
         action_step = policy.action(time_step)
         next_time_step = environment.step(action_step.action)

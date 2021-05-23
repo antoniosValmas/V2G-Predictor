@@ -46,6 +46,7 @@ class V2GEnvironment(PyEnvironment):
                 "num_of_vehicles": [],
                 "cost": [],
                 "overcharged_time_per_car": [],
+                "c_rate_per_car": [],
                 "cycle_degradation": [],
                 "age_degradation": [],
             },
@@ -54,7 +55,6 @@ class V2GEnvironment(PyEnvironment):
         self._parking = Parking(capacity, name)
         self._energy_curve = EnergyCurve(dataFile, name)
         self._vehicle_distribution = vehicle_distribution
-        self.reset()
 
     def get_metrics(self):
         return self._state["metrics"]
@@ -65,6 +65,7 @@ class V2GEnvironment(PyEnvironment):
             "num_of_vehicles": [],
             "cost": [],
             "overcharged_time_per_car": [],
+            "c_rate_per_car": [],
             "cycle_degradation": [],
             "age_degradation": [],
         }
@@ -117,6 +118,7 @@ class V2GEnvironment(PyEnvironment):
 
         num_of_vehicles = len(self._parking._vehicles)
         reward = 0.0
+        discount = 0
 
         self._state["metrics"]["cost"].append(0)
         self._state["metrics"]["cycle_degradation"].append(0)
@@ -131,40 +133,43 @@ class V2GEnvironment(PyEnvironment):
                     self._parking.get_next_max_charge() if is_buying else self._parking.get_next_max_discharge()
                 )
 
-                # print(f"Charging Coefficient: {charging_coefficient}")
-
                 new_energy = max_energy * charging_coefficient
 
                 # print(f"New energy: {new_energy}")
 
-                available_energy = (
-                    new_energy + self._parking.get_next_min_discharge() - self._parking.get_next_min_charge()
-                )
+                threshold_energy = self._parking.get_next_min_discharge() - self._parking.get_next_min_charge()
+                available_energy = new_energy + threshold_energy
 
                 # print(f"Available energy: {available_energy}")
-                # print(available_energy,)
+                max_non_emergency_charge = self._parking.get_next_max_charge() + threshold_energy
+                max_non_emergency_discharge = self._parking.get_next_max_discharge() - threshold_energy
+                # print(f"Max non emergency charge: {max_non_emergency_charge}")
+                # print(f"Max non emergency discharge: {max_non_emergency_discharge}")
 
-                avg_charge_levels, degrade_rates, overcharged_time = self._parking.update(
-                    available_energy
-                    / (
-                        self._parking.get_next_max_charge()
-                        if is_charging > 0
-                        else self._parking.get_next_max_discharge()
-                    )
-                    if charging_coefficient != threshold_coefficient
+                update_coefficient = (
+                    available_energy / (max_non_emergency_charge if is_charging > 0 else max_non_emergency_discharge)
+                    if round(abs(charging_coefficient - threshold_coefficient), 2) > 0.02
                     else 0
                 )
+                # print(f"Update coefficient: {update_coefficient}")
+                avg_charge_levels, degrade_rates, overcharged_time = self._parking.update(update_coefficient)
 
                 # print(f"Available charge levels: {avg_charge_levels}")
                 # print(f"Degrade rates: {degrade_rates}")
 
                 cost = int(new_energy * current_cost * 100)
+                # print(
+                #     f"Charg Coeff: {charging_coefficient}, New E: {new_energy}, Current C: {current_cost},"
+                #     + f" Total: {cost}, Vehicles: {num_of_vehicles}"
+                #     + f", Avg Ch L: {sum(avg_charge_levels) / len(avg_charge_levels)}"
+                # )
+                # cost = abs(cost / 8) ** 1.3 * (1 if is_buying else -1)
 
                 cycle_degradation_cost = 0.0
                 for degrade_rate in degrade_rates:
                     cycle_degradation_cost += (
                         (self.cycle_degradation(degrade_rate) * self._battery_capacity * self._battery_cost)
-                        if degrade_rate != 0
+                        if degrade_rate > 0
                         else 0
                     )
                 cycle_degradation_cost = int(cycle_degradation_cost * 100)
@@ -187,7 +192,9 @@ class V2GEnvironment(PyEnvironment):
                 self._state["metrics"]["cycle_degradation"][-1] = cycle_degradation_cost
                 self._state["metrics"]["age_degradation"][-1] = age_degradation_cost
                 self._state["metrics"]["overcharged_time_per_car"] += overcharged_time
+                self._state["metrics"]["c_rate_per_car"] += degrade_rates
 
+                discount = 0.9
                 # print(f"Energy cost: {cost}")
                 # print(f"Cycle degradation cost: {cycle_degradation_cost}")
                 # print(f"Age degradation cost: {age_degradation_cost}")
@@ -233,7 +240,7 @@ class V2GEnvironment(PyEnvironment):
         return time_step.TimeStep(
             step_type=time_step.StepType.MID if self._state["step"] < 24 else time_step.StepType.LAST,
             reward=np.array(reward, dtype=np.float32),
-            discount=np.array(0.9, dtype=np.float32),
+            discount=np.array(discount, dtype=np.float32),
             observation=np.array(
                 [
                     max_acceptable_coefficient,
