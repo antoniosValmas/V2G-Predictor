@@ -1,6 +1,7 @@
 from __future__ import absolute_import, division, print_function
+from app.policies.all_buy import AllBuy
 
-from app.policies.utils import compute_avg_return, metrics_visualization, plot_metric
+from app.policies.utils import compute_avg_return, metrics_visualization, moving_average, plot_metric
 from app.models.environment import V2GEnvironment
 
 import sys
@@ -19,18 +20,18 @@ from tf_agents.trajectories import trajectory
 
 
 class DQNPolicy:
-    num_iterations = 24 * 30 * 100  # @param {type:"integer"}
+    num_iterations = 24 * 30 * 4  # @param {type:"integer"}
 
     initial_collect_steps = 24 * 5  # @param {type:"integer"}
     collect_steps_per_iteration = 1  # @param {type:"integer"}
-    replay_buffer_max_length = 100000  # @param {type:"integer"}
+    replay_buffer_max_length = 1000000  # @param {type:"integer"}
 
-    batch_size = 128  # @param {type:"integer"}
-    learning_rate = 1e-3  # @param {type:"number"}
+    batch_size = 32  # @param {type:"integer"}
+    learning_rate = 1e-4  # @param {type:"number"}
     log_interval = 24  # @param {type:"integer"}
 
-    num_eval_episodes = 30  # @param {type:"integer"}
-    eval_interval = 24 * 30 * 5  # @param {type:"integer"}
+    num_eval_episodes = 10  # @param {type:"integer"}
+    eval_interval = 24 * 30 * 2  # @param {type:"integer"}
 
     train_dir = "checkpoints"
 
@@ -47,12 +48,10 @@ class DQNPolicy:
         self.q_net = sequential.Sequential(
             [
                 layers.Dense(units=33, activation="elu"),
-                layers.Dense(units=512, activation="elu"),
+                layers.Dense(units=128, activation="elu"),
+                # layers.Dropout(0.3),
                 layers.BatchNormalization(),
-                layers.Dropout(0.3),
-                layers.Dense(units=512, activation="elu"),
-                layers.BatchNormalization(),
-                layers.Dropout(0.4),
+                # layers.Dropout(0.4),
                 layers.Dense(
                     num_actions,
                     activation=None,
@@ -69,7 +68,8 @@ class DQNPolicy:
             optimizer=self.optimizer,
             td_errors_loss_fn=common.element_wise_squared_loss,
             train_step_counter=self.global_step,
-            target_update_tau=0.001
+            target_update_tau=0.01,
+            target_update_period=1,
         )
 
         self.agent.initialize()
@@ -91,7 +91,7 @@ class DQNPolicy:
 
         self.train_checkpointer = common.Checkpointer(
             ckpt_dir=self.train_dir,
-            max_to_keep=1,
+            max_to_keep=5,
             agent=self.agent,
             policy=self.agent.policy,
             replay_buffer=self.replay_buffer,
@@ -114,13 +114,14 @@ class DQNPolicy:
         self.eval_env.reset()
         print("Collect Step")
 
-        self.collect_data(self.train_env, self.agent.policy, self.initial_collect_steps)
+        all_buy = AllBuy(0.5)
+        self.collect_data(self.train_env, all_buy, self.initial_collect_steps)
         self.agent.train = common.function(self.agent.train)
         self.raw_eval_env.reset_metrics()
         returns = []
         loss = []
 
-        for _ in range(self.num_iterations):
+        for i in range(self.num_iterations):
 
             try:
                 self.collect_data(self.train_env, self.agent.policy, 1)
@@ -134,19 +135,23 @@ class DQNPolicy:
 
                 if step % self.log_interval == 0:
                     remainder = step % self.eval_interval
-                    percentage = ((remainder if remainder != 0 else self.eval_interval) * 90) // self.eval_interval
+                    percentage = ((remainder if remainder != 0 else self.eval_interval) * 70) // self.eval_interval
                     sys.stdout.write("\r")
                     sys.stdout.write("\033[K")
-                    sys.stdout.write(f'[{"=" * percentage + " " * (90 - percentage)}] loss: {train_loss} ')
+                    sys.stdout.write(f'[{"=" * percentage + " " * (70 - percentage)}] loss: {train_loss} ')
                     sys.stdout.flush()
 
                 if step % self.eval_interval == 0:
                     avg_return = compute_avg_return(self.eval_env, self.agent.policy, self.num_eval_episodes)
-                    print("step = {0}: Average Return = {1}".format(step, avg_return))
+                    epoch = (i + 1) // self.eval_interval
+                    total_epochs = self.num_iterations // self.eval_interval
+                    print(
+                        "Epoch: {0}/{1} step = {2}: Average Return = {3}".format(epoch, total_epochs, step, avg_return)
+                    )
                     returns.append(avg_return)
 
-                    metrics_visualization(self.raw_eval_env.get_metrics(), step // self.eval_interval, "dqn")
-                    self.raw_eval_env.reset_metrics()
+                    metrics_visualization(self.raw_eval_env.get_metrics(), (i + 1) // self.eval_interval, "dqn")
+                    self.raw_eval_env.hard_reset()
 
                     # self.collect_data(self.train_env, self.random_policy, self.initial_collect_steps)
 
@@ -155,8 +160,10 @@ class DQNPolicy:
                 raise e
 
         self.train_checkpointer.save(global_step=self.global_step.numpy())
-        plot_metric(returns, 'Average Returns', 'plots/raw_dqn')
-        plot_metric(loss, 'Training Loss', 'plots/raw_dqn', log_scale=True)
+        plot_metric(returns, "Average Returns", 0, "plots/raw_dqn", "Average Return", no_xticks=True)
+        plot_metric(
+            moving_average(loss, 240), "Training Loss", 0, "plots/raw_dqn", "Loss", log_scale=True, no_xticks=True
+        )
 
     def collect_step(self, environment: tf_py_environment.TFPyEnvironment, policy):
         time_step = environment.current_time_step()

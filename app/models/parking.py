@@ -150,6 +150,7 @@ class Parking:
 
         overcharged_time = []
         for v in departed_vehicles:
+            # print("Vehicle with target ", v.get_target_charge(), " and changes ", v._changes)
             overcharged_time.append(v.get_overchared_time())
 
         return overcharged_time
@@ -175,6 +176,11 @@ class Parking:
             self._discharge_mean_priority += discharge_priority
 
         number_of_vehicles = len(self._vehicles)
+
+        self._next_max_charge = round(self._next_max_charge, 2)
+        self._next_min_charge = round(self._next_min_charge, 2)
+        self._next_max_discharge = round(self._next_max_discharge, 2)
+        self._next_min_discharge = round(self._next_min_discharge, 2)
 
         if number_of_vehicles == 0:
             return
@@ -217,7 +223,9 @@ class Parking:
         priority = Vehicle.get_charge_priority if is_charging else Vehicle.get_discharge_priority
 
         for vehicle in self._vehicles:
+            before = vehicle._current_charge
             vehicle.update_emergency_demand()
+            # print("Emergency Demand satisfied: ", vehicle._current_charge - before)
 
         self._next_max_charge -= self._next_min_charge
         self._next_max_discharge -= self._next_min_discharge
@@ -235,12 +243,11 @@ class Parking:
             key=lambda v: sign * charging_coefficient * (1 + priority(v) - normalization_constant),
             reverse=True,
         ):
-            # print('Before')
-            # print(vehicle)
+            before = vehicle._current_charge
             avg_charge_level, degrade_rate, residue = vehicle.update_current_charge(
                 charging_coefficient, normalization_constant, residue
             )
-            # print('After')
+            # print("Normal demand satisfied: ", vehicle._current_charge - before)
             # print(vehicle)
             # print(residue)
             degrade_rates.append(degrade_rate)

@@ -53,6 +53,7 @@ class Vehicle:
         self._discharge_priority = 0.0
         self.name = name
         self._before_charge = 0.0
+        self._changes = []
 
         self._overcharged_time = 0
         self._original_target_charge = target_charge
@@ -235,11 +236,13 @@ class Vehicle:
                 area_bellow: float = np.trapz(partial_min_curve, partial_x_axes)
 
                 discharge_area = current_charge_area - area_bellow
-                self._discharge_priority = round(discharge_area / diff_curve_area, 3)
-                self._charge_priority = round(1 - self._discharge_priority, 3)
+                self._discharge_priority = discharge_area / diff_curve_area
+                self._charge_priority = 1 - self._discharge_priority
 
             self._charge_priority /= max(1, self._time_before_departure - 2)
             self._discharge_priority /= max(1, self._time_before_departure - 2)
+            self._charge_priority = round(self._charge_priority, 2)
+            self._discharge_priority = round(self._discharge_priority, 2)
         except ValueError as e:
             print(x_axes, max_curve, min_curve)
             raise e
@@ -292,15 +295,16 @@ class Vehicle:
 
         self._current_charge = round(
             self._current_charge + new_vehicle_energy - residue,
-            3,
+            2,
         )
 
         avg_charge_level = (self._before_charge + self._current_charge) / 2
-        degrade_rate = (self._current_charge - self._before_charge) / config.BATTERY_CAPACITY
-        if abs(degrade_rate) > 1:
-            print(self._current_charge, self._before_charge, config.BATTERY_CAPACITY)
-            print(new_vehicle_energy, residue, residue_energy, charging_coefficient)
-            print(self)
+        degrade_rate = round(self._current_charge - self._before_charge, 2)
+        self._changes.append(degrade_rate)
+        # if abs(degrade_rate) > 1:
+        #     print(self._current_charge, self._before_charge, config.BATTERY_CAPACITY)
+        #     print(new_vehicle_energy, residue, residue_energy, charging_coefficient)
+        #     print(self)
 
         self._time_before_departure -= 1
         if (self._current_charge / config.BATTERY_CAPACITY) > 0.5:
@@ -446,16 +450,16 @@ class Vehicle:
 
     def toJson(self) -> Dict[str, Any]:
         return {
-            "class": Vehicle.__name__,
-            "name": self.name,
+            # "class": Vehicle.__name__,
+            # "name": self.name,
             "current_change": self._current_charge,
             "target_charge": self._target_charge,
-            "original_target_charge": self._original_target_charge,
+            # "original_target_charge": self._original_target_charge,
             "time_before_departure": self._time_before_departure,
-            "max_charge": self._max_charge,
-            "min_charge": self._min_charge,
-            "max_charging_rate": self._max_charging_rate,
-            "min_discharging_rate": self._max_discharging_rate,
+            # "max_charge": self._max_charge,
+            # "min_charge": self._min_charge,
+            # "max_charging_rate": self._max_charging_rate,
+            # "min_discharging_rate": self._max_discharging_rate,
             "next_max_charge": self._next_max_charge,
             "next_min_charge": self._next_min_charge,
             "next_max_discharge": self._next_max_discharge,
