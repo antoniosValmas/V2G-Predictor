@@ -1,7 +1,7 @@
 from app.models.energy import EnergyCurve
 import matplotlib.pyplot as plt
 
-ec = EnergyCurve('./data/GR-data-11-20.csv', 'test')
+ec = EnergyCurve('./data/GR-data-new.csv', 'test')
 
 o_x = []
 o_y = []

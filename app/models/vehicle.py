@@ -3,6 +3,7 @@ import json
 import numpy as np
 import math
 from typing import Any, Dict
+import config
 
 
 class Vehicle:
@@ -51,6 +52,8 @@ class Vehicle:
         self._charge_priority = 0.0
         self._discharge_priority = 0.0
         self.name = name
+        self._before_charge = 0.0
+        self._changes = []
 
         self._overcharged_time = 0
         self._original_target_charge = target_charge
@@ -189,6 +192,7 @@ class Vehicle:
         - The discharging priority is calculated as the ratio of
             - the area below the y = current_charge line that is part of the "max/min area"
             - and the "max/min area"
+        - If area is equal to zero and next_max_charge = next_max_discharge = 0 then both priorities are equal to 0
 
         From the above it is obvious that the following is true for the two priorities:
         ``charging_priority = 1 - discharging_priority``
@@ -218,8 +222,8 @@ class Vehicle:
                 self._charge_priority = 0.0 if diff > 0 else 1.0
                 self._discharge_priority = 1.0 if diff > 0 else 0.0
             elif diff_curve_area == 0 and intersection is not None:
-                self._charge_priority = 0.5
-                self._discharge_priority = 0.5
+                self._charge_priority = 0
+                self._discharge_priority = 0
             else:
                 inter_x, inter_y = intersection
                 cutoff_index = math.ceil(inter_x)
@@ -232,11 +236,13 @@ class Vehicle:
                 area_bellow: float = np.trapz(partial_min_curve, partial_x_axes)
 
                 discharge_area = current_charge_area - area_bellow
-                self._discharge_priority = round(discharge_area / diff_curve_area, 3)
-                self._charge_priority = round(1 - self._discharge_priority, 3)
+                self._discharge_priority = discharge_area / diff_curve_area
+                self._charge_priority = 1 - self._discharge_priority
 
             self._charge_priority /= max(1, self._time_before_departure - 2)
             self._discharge_priority /= max(1, self._time_before_departure - 2)
+            self._charge_priority = round(self._charge_priority, 2)
+            self._discharge_priority = round(self._discharge_priority, 2)
         except ValueError as e:
             print(x_axes, max_curve, min_curve)
             raise e
@@ -285,18 +291,23 @@ class Vehicle:
         new_vehicle_energy = (
             next_max_energy * charging_coefficient * (1 + priority - normalization_constant) + residue_energy
         )
-        residue = max(0, new_vehicle_energy * sign - next_max_energy) * sign
+        residue = max(0, abs(new_vehicle_energy) - next_max_energy) * sign
 
-        new_current_charge = round(
+        self._current_charge = round(
             self._current_charge + new_vehicle_energy - residue,
-            3,
+            2,
         )
 
-        avg_charge_level = (new_current_charge + self._current_charge) / 2
-        self._current_charge = new_current_charge
+        avg_charge_level = (self._before_charge + self._current_charge) / 2
+        degrade_rate = round(self._current_charge - self._before_charge, 2)
+        self._changes.append(degrade_rate)
+        # if abs(degrade_rate) > 1:
+        #     print(self._current_charge, self._before_charge, config.BATTERY_CAPACITY)
+        #     print(new_vehicle_energy, residue, residue_energy, charging_coefficient)
+        #     print(self)
 
         self._time_before_departure -= 1
-        if (self._current_charge / self._max_charge) > 0.5:
+        if (self._current_charge / config.BATTERY_CAPACITY) > 0.5:
             self._overcharged_time += 1
 
         if math.isnan(avg_charge_level) or math.isnan(residue) or math.isnan(self._current_charge):
@@ -307,30 +318,18 @@ class Vehicle:
         if self._time_before_departure != 0:
             self.update()
 
-        return avg_charge_level, residue
+        return avg_charge_level, degrade_rate, residue
 
-    def update_emergency_demand(self, energy: float, is_charging: bool):
+    def update_emergency_demand(self):
         """
         Satisfy the minimum demand of the vehicle
-
-        ### Arguments:
-            energy (``float``) :
-                description: The energy to satisfy the minimum needs
-            is_charging (``bool``) :
-                description: Whether the action is charging or discharging
         """
-        if is_charging:
-            self._target_charge -= self._next_min_charge - energy
-            self._target_charge += self._next_min_discharge
-            self._current_charge += energy
-        else:
-            self._target_charge += self._next_min_discharge - energy
-            self._target_charge -= self._next_min_charge
-            self._current_charge -= energy
-
-        if math.isnan(self._target_charge) or math.isnan(self._current_charge):
-            print("Warning: NaN values found on update_emergency_demand")
-            print(self._target_charge, self._current_charge, energy, is_charging)
+        self._before_charge = self._current_charge
+        self._current_charge = self._current_charge + self._next_min_charge - self._next_min_discharge
+        self._next_max_charge -= self._next_min_charge
+        self._next_max_discharge -= self._next_min_discharge
+        self._next_min_charge = 0
+        self._next_min_discharge = 0
 
     def get_current_charge(self):
         """
@@ -451,16 +450,16 @@ class Vehicle:
 
     def toJson(self) -> Dict[str, Any]:
         return {
-            "class": Vehicle.__name__,
-            "name": self.name,
+            # "class": Vehicle.__name__,
+            # "name": self.name,
             "current_change": self._current_charge,
             "target_charge": self._target_charge,
-            "original_target_charge": self._original_target_charge,
+            # "original_target_charge": self._original_target_charge,
             "time_before_departure": self._time_before_departure,
-            "max_charge": self._max_charge,
-            "min_charge": self._min_charge,
-            "max_charging_rate": self._max_charging_rate,
-            "min_discharging_rate": self._max_discharging_rate,
+            # "max_charge": self._max_charge,
+            # "min_charge": self._min_charge,
+            # "max_charging_rate": self._max_charging_rate,
+            # "min_discharging_rate": self._max_discharging_rate,
             "next_max_charge": self._next_max_charge,
             "next_min_charge": self._next_min_charge,
             "next_max_discharge": self._next_max_discharge,

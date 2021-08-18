@@ -34,13 +34,25 @@ def create_vehicle_distribution(steps=24 * 30 * 6) -> List[List[int]]:
     time_of_day = 0
     vehicles = []
     for _ in range(steps):
-        day_coefficient = math.sin(math.pi / 12 * time_of_day) / 2 + 0.5
+        day_coefficient = math.sin(math.pi / 6 * time_of_day) / 2 + 0.5
         new_cars = max(0, int(np.random.normal(20 * day_coefficient, 2 * day_coefficient)))
         time_of_day += 1
         time_of_day %= 24
-        if time_of_day > 20:
+        if time_of_day > 21:
             vehicles.append([])
         else:
-            vehicles.append([min(24 - time_of_day, random.randint(7, 12)) for _ in range(new_cars)])
+            vehicles.append(
+                [
+                    (
+                        min(
+                            24 - time_of_day,
+                            random.randint(7, 12),
+                        ),
+                        round(6 + random.random() * 20, 2),
+                        round(34 + random.random() * 20, 2),
+                    )
+                    for _ in range(new_cars)
+                ]
+            )
 
     return vehicles

@@ -3,11 +3,11 @@ import matplotlib.pyplot as plt
 
 from app.tests.test_vehicle import test_vehicle
 
-env = V2GEnvironment(10, 'data/GR-data-11-20.csv', 'test')
+env = V2GEnvironment(5, 'data/GR-data-new.csv', 'test')
 
 
 def create_vehicle_diagram(step: int):
-    fig, axes = plt.subplots(2, 5, sharey="row")
+    fig, axes = plt.subplots(1, 5, sharey="row")
     fig.set_size_inches(18, 9)
     axes = axes.flatten()
 
@@ -25,7 +25,7 @@ print(env._parking)
 create_vehicle_diagram(env._state["step"])
 while not obs.is_last():
     action = int(input("Provide coefficient: "))
-    obs = env._step(action)
+    obs = env.step(action)
     print(f'Observation: {obs}')
     print(env._parking)
     create_vehicle_diagram(env._state["step"])
