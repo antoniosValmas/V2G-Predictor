@@ -1,5 +1,5 @@
 from __future__ import absolute_import, division, print_function
-from app.policies.all_buy import AllBuy
+from app.policies.dummy_v2g import DummyV2G
 
 from app.policies.utils import compute_avg_return, metrics_visualization, moving_average, plot_metric
 from app.models.environment import V2GEnvironment
@@ -20,7 +20,7 @@ from tf_agents.trajectories import trajectory
 
 
 class DQNPolicy:
-    num_iterations = 24 * 30 * 4  # @param {type:"integer"}
+    num_iterations = 24 * 30 * 50  # @param {type:"integer"}
 
     initial_collect_steps = 24 * 5  # @param {type:"integer"}
     collect_steps_per_iteration = 1  # @param {type:"integer"}
@@ -49,7 +49,6 @@ class DQNPolicy:
             [
                 layers.Dense(units=33, activation="elu"),
                 layers.Dense(units=128, activation="elu"),
-                # layers.Dropout(0.3),
                 layers.BatchNormalization(),
                 # layers.Dropout(0.4),
                 layers.Dense(
@@ -68,7 +67,7 @@ class DQNPolicy:
             optimizer=self.optimizer,
             td_errors_loss_fn=common.element_wise_squared_loss,
             train_step_counter=self.global_step,
-            target_update_tau=0.01,
+            target_update_tau=0.001,
             target_update_period=1,
         )
 
@@ -114,8 +113,8 @@ class DQNPolicy:
         self.eval_env.reset()
         print("Collect Step")
 
-        all_buy = AllBuy(0.5)
-        self.collect_data(self.train_env, all_buy, self.initial_collect_steps)
+        dummy_v2g = DummyV2G(0.5)
+        self.collect_data(self.train_env, dummy_v2g, self.initial_collect_steps)
         self.agent.train = common.function(self.agent.train)
         self.raw_eval_env.reset_metrics()
         returns = []

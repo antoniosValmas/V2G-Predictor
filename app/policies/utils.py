@@ -1,10 +1,13 @@
 from app.models.energy import EnergyCurve
 import math
-from typing import Dict, List, Union
+from typing import Dict, List, Tuple, Union
 import matplotlib.pyplot as plt
+from matplotlib import cm
+from matplotlib.colors import ListedColormap, Normalize
 import numpy as np
 from collections import Counter
 from tf_agents.environments.py_environment import PyEnvironment
+import pickle
 
 
 def compute_avg_return(environment: PyEnvironment, policy, num_episodes=10):
@@ -39,7 +42,9 @@ def plot_metric(
     plt.plot(metric)
     plt.title(title)
     if not no_xticks:
-        plt.xticks(range(1, len(metric) + 1, 24), range(1, len(metric) // 24 + 1))
+        plt.xticks(range(0, len(metric) + 1, 24), range(0, len(metric) // 24 + 1))
+    else:
+        plt.xticks(range(0, len(metric)), range(0, 24))
     plt.ylabel(ylabel)
     plt.xlabel("Days")
     if log_scale:
@@ -74,11 +79,10 @@ def bar_metric(
     plt.close(fig)
 
 
-def plot_transaction_curve(cost: List[float], policy, epoch):
+def plot_transaction_curve(cost: List[float], policy, epoch, energy_demand: List[float], open=False):
     folder = f"plots/raw_{policy}"
     length = len(cost)
-    nc = EnergyCurve("./data/GR-data-11-20.csv", "eval")
-    energy_demand = nc.get_y()[:length]
+    energy_demand = energy_demand[:length]
     buying = [[], [], []]
     nothing = [[], []]
     selling = [[], [], []]
@@ -106,7 +110,33 @@ def plot_transaction_curve(cost: List[float], policy, epoch):
     plt.legend()
     plt.title("Transactions")
     plt.tight_layout()
-    plt.savefig(f"{folder}/Transactions {epoch}.png")
+    if open:
+        plt.show()
+    else:
+        plt.savefig(f"{folder}/Transactions {epoch}.png")
+    plt.close()
+
+
+def plot_color_maps(
+    z_values: List[List[int]],
+    x_ticks: Tuple[List[int], List[int]],
+    y_ticks: Tuple[List[int], List[int]],
+    title: str,
+    epoch: int,
+    folder: str,
+    xlabel: str,
+    ylabel: str,
+):
+    greys = cm.get_cmap("Greys", 256)
+    colors = greys(np.linspace(0, 1, 256))
+    color_map = ListedColormap(colors)
+    plt.pcolormesh(z_values, cmap=color_map, norm=Normalize(), rasterized=True)
+    plt.title(title)
+    plt.xticks(x_ticks[0], x_ticks[1])
+    plt.yticks(y_ticks[0], y_ticks[1])
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.savefig(f"{folder}/{title} {epoch}.png")
     plt.close()
 
 
@@ -122,12 +152,26 @@ def get_frequency(iteratable):
 
 def metrics_raw(metrics, epoch, policy):
     raw_folder = f"plots/raw_{policy}"
-    plot_metric(metrics["cost"], "Cost", epoch, raw_folder, "Transaction Cost (Euro Cents)")
+    plot_metric(metrics["cost"], "Cost", epoch, raw_folder, "Transaction Cost (Euro Cents)", no_xticks=False)
     plot_metric(
-        metrics["cycle_degradation"], "Cycle degradation", epoch, raw_folder, "Cycle degradation cost (Euro Cents)"
+        metrics["cycle_degradation"],
+        "Cycle degradation",
+        epoch,
+        raw_folder,
+        "Cycle degradation cost (Euro Cents)",
+        no_xticks=False,
     )
-    plot_metric(metrics["age_degradation"], "Age degradation", epoch, raw_folder, "Age degradation cost (Euro Cents)")
-    plot_metric(metrics["num_of_vehicles"], "Number of vehicles", epoch, raw_folder, "Number of vehicles")
+    plot_metric(
+        metrics["age_degradation"],
+        "Age degradation",
+        epoch,
+        raw_folder,
+        "Age degradation cost (Euro Cents)",
+        no_xticks=False,
+    )
+    plot_metric(
+        metrics["num_of_vehicles"], "Number of vehicles", epoch, raw_folder, "Number of vehicles", no_xticks=False
+    )
 
 
 def moving_average(x, w):
@@ -184,12 +228,72 @@ def metrics_simple(metrics, epoch, policy):
         f.write(f'Average Age Degradation / hour: {total_sum["age_degradation"] / len(metrics["age_degradation"])}\n')
 
 
+def metrics_colormap(metrics, epoch, policy, nc: EnergyCurve):
+    folder = f"plots/colormaps_{policy}"
+
+    length = len(metrics["actions"])
+    energy_price = nc.get_y()[:length]
+    energy_price = list(map(lambda price: round(price), energy_price))
+    charging_coefficient = list(map(lambda cc: round(cc, 2), metrics["charging_coefficient"]))
+
+    min_energy_price = min(energy_price)
+    max_energy_price = max(energy_price)
+    energy_price_values = np.linspace(min_energy_price, max_energy_price + 1, max_energy_price - min_energy_price + 2)
+    actions = np.linspace(1, 21, 21)
+    charging_coefficient_values = np.linspace(-1, 1, 201)
+
+    action_ep = [[0 for ep in energy_price_values[:-1]] for v in actions]
+    for action in metrics["actions"]:
+        for ep in energy_price:
+            action_ep[action][ep - min_energy_price] += 1
+
+    plot_color_maps(
+        action_ep,
+        (
+            np.linspace(0, len(energy_price_values), 10, endpoint=False, dtype=np.int),
+            np.linspace(min_energy_price, max_energy_price + 1, 10, dtype=np.int),
+        ),
+        (np.linspace(0, 21, 10, dtype=np.int), np.linspace(0, 21, 10, dtype=np.int)),
+        "Energy Price vs Actions",
+        epoch,
+        folder,
+        "Energy Price",
+        "Action",
+    )
+
+    cc_ep = [[0 for ep in energy_price_values] for v in charging_coefficient_values]
+    for cc in charging_coefficient:
+        for ep in energy_price:
+            cc_ep[int((cc + 1) * 100)][ep - min_energy_price] += 1
+
+    plot_color_maps(
+        cc_ep,
+        (
+            np.linspace(0, len(energy_price_values) - 1, 10, dtype=np.int),
+            np.linspace(min_energy_price, max_energy_price + 1, 10, dtype=np.int),
+        ),
+        (
+            np.linspace(0, len(charging_coefficient_values) - 1, 11),
+            list(map(lambda x: round(x, 2), np.linspace(-1, 1, 11))),
+        ),
+        "Energy Price vs Charging Coefficient",
+        epoch,
+        folder,
+        "Energy Price",
+        "Charging Coefficient",
+    )
+
+
 def metrics_visualization(metrics: Dict[str, List[Union[int, float]]], epoch: int, policy: str):
     if epoch % 4 == 0:
         epoch = 4
     else:
         epoch %= 4
-    plot_transaction_curve(metrics["cost"], policy, epoch)
+
+    pickle.dump(metrics, open(f"./data/metrics_{policy}", "wb"))
+    nc = EnergyCurve("./data/GR-data-new.csv", "eval")
+    plot_transaction_curve(metrics["cost"], policy, epoch, nc.get_y())
     metrics_raw(metrics, epoch, policy)
     metrics_frequency(metrics, epoch, policy)
     metrics_simple(metrics, epoch, policy)
+    # metrics_colormap(metrics, epoch, policy, nc)

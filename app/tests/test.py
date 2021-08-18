@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 
 from app.tests.test_vehicle import test_vehicle
 
-env = V2GEnvironment(5, 'data/GR-data-11-20.csv', 'test')
+env = V2GEnvironment(5, 'data/GR-data-new.csv', 'test')
 
 
 def create_vehicle_diagram(step: int):

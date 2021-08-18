@@ -49,6 +49,8 @@ class V2GEnvironment(PyEnvironment):
                 "c_rate_per_car": [],
                 "cycle_degradation": [],
                 "age_degradation": [],
+                "actions": [],
+                "charging_coefficient": [],
                 "test_sum": 0,
             },
         }
@@ -69,6 +71,8 @@ class V2GEnvironment(PyEnvironment):
             "c_rate_per_car": [],
             "cycle_degradation": [],
             "age_degradation": [],
+            "actions": [],
+            "charging_coefficient": [],
             "test_sum": 0,
         }
 
@@ -131,6 +135,8 @@ class V2GEnvironment(PyEnvironment):
         self._state["metrics"]["cycle_degradation"].append(0)
         self._state["metrics"]["age_degradation"].append(0)
         self._state["metrics"]["num_of_vehicles"].append(num_of_vehicles)
+        self._state["metrics"]["actions"].append(idx)
+        self._state["metrics"]["charging_coefficient"].append(charging_coefficient)
 
         if num_of_vehicles != 0:
             try:
