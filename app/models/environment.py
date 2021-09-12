@@ -154,8 +154,10 @@ class V2GEnvironment(PyEnvironment):
                 available_energy = new_energy + threshold_energy
 
                 # print(f"Available energy: {available_energy}")
-                max_non_emergency_charge = self._parking.get_next_max_charge() + threshold_energy
-                max_non_emergency_discharge = self._parking.get_next_max_discharge() - threshold_energy
+                max_non_emergency_charge = self._parking.get_next_max_charge() - self._parking.get_next_min_charge()
+                max_non_emergency_discharge = (
+                    self._parking.get_next_max_discharge() - self._parking.get_next_min_discharge()
+                )
                 # print(f"Max non emergency charge: {max_non_emergency_charge}")
                 # print(f"Max non emergency discharge: {max_non_emergency_discharge}")
 

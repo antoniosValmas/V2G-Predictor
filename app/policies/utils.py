@@ -6,27 +6,7 @@ from matplotlib import cm
 from matplotlib.colors import ListedColormap, Normalize
 import numpy as np
 from collections import Counter
-from tf_agents.environments.py_environment import PyEnvironment
 import pickle
-
-
-def compute_avg_return(environment: PyEnvironment, policy, num_episodes=10):
-    total_return = 0.0
-    step = 0
-    for _ in range(num_episodes):
-
-        time_step = environment.reset()
-        episode_return = 0.0
-
-        while not time_step.is_last():
-            action_step = policy.action(time_step)
-            time_step = environment.step(action_step.action)
-            episode_return += time_step.reward
-            step += 1
-        total_return += episode_return
-
-    avg_return = total_return / step
-    return avg_return.numpy()[0]
 
 
 def sigmoid(x):
@@ -36,20 +16,27 @@ def sigmoid(x):
 
 
 def plot_metric(
-    metric: List[Union[int, float]], title: str, epoch: int, folder: str, ylabel: str, log_scale=False, no_xticks=False
+    metric: List[Union[int, float]],
+    title: str,
+    epoch: int,
+    folder: str,
+    ylabel: str,
+    log_scale=False,
+    no_xticks=False,
 ):
-    fig = plt.figure(figsize=(14, 6))
+    fig = plt.figure(figsize=(10, 4))
     plt.plot(metric)
     plt.title(title)
     if not no_xticks:
         plt.xticks(range(0, len(metric) + 1, 24), range(0, len(metric) // 24 + 1))
     else:
-        plt.xticks(range(0, len(metric)), range(0, 24))
+        plt.xticks(range(0, len(metric)), range(0, len(metric)))
     plt.ylabel(ylabel)
-    plt.xlabel("Days")
+    plt.xlabel("Hour of the day")
     if log_scale:
         plt.yscale("log")
     plt.tight_layout()
+    plt.grid(True, "major", "both")
     fig.savefig(f"{folder}/{title} {epoch}.png")
     plt.close(fig)
 
@@ -65,7 +52,7 @@ def bar_metric(
     y_lim=None,
     xticks=None,
 ):
-    fig = plt.figure(figsize=(14, 6))
+    fig = plt.figure(figsize=(12, 5))
     plt.bar(x_values, metric)
     plt.title(title)
     if y_lim:
@@ -99,13 +86,14 @@ def plot_transaction_curve(cost: List[float], policy, epoch, energy_demand: List
             selling[1].append(ed)
             selling[2].append(abs(c) ** 0.5)
 
-    plt.figure(figsize=(14, 6))
+    plt.figure(figsize=(8, 4))
     plt.plot(energy_demand, label="Energy Demand Curve")
     plt.scatter(buying[0], buying[1], s=buying[2], label="Buying", c="g")
     plt.scatter(nothing[0], nothing[1], label="Nothing", c="darkgrey")
     plt.scatter(selling[0], selling[1], s=selling[2], label="Selling", c="r")
-    plt.xticks(range(1, length + 1, 24), range(1, length // 24 + 1))
-    plt.xlabel("Days")
+    # plt.xticks(range(1, length + 1, 24), range(1, length // 24 + 1))
+    plt.xticks(range(0, length), range(0, length))
+    plt.xlabel("Hour of the day")
     plt.ylabel("Energy Demand (Euro / MWh)")
     plt.legend()
     plt.title("Transactions")
@@ -150,16 +138,23 @@ def get_frequency(iteratable):
     return x, y
 
 
-def metrics_raw(metrics, epoch, policy):
+def metrics_raw(metrics, epoch, policy, figs, axes):
     raw_folder = f"plots/raw_{policy}"
-    plot_metric(metrics["cost"], "Cost", epoch, raw_folder, "Transaction Cost (Euro Cents)", no_xticks=False)
+    plot_metric(
+        metrics["cost"],
+        "Cost",
+        epoch,
+        raw_folder,
+        "Transaction Cost (Euro Cents)",
+        no_xticks=True,
+    )
     plot_metric(
         metrics["cycle_degradation"],
         "Cycle degradation",
         epoch,
         raw_folder,
         "Cycle degradation cost (Euro Cents)",
-        no_xticks=False,
+        no_xticks=True,
     )
     plot_metric(
         metrics["age_degradation"],
@@ -167,10 +162,10 @@ def metrics_raw(metrics, epoch, policy):
         epoch,
         raw_folder,
         "Age degradation cost (Euro Cents)",
-        no_xticks=False,
+        no_xticks=True,
     )
     plot_metric(
-        metrics["num_of_vehicles"], "Number of vehicles", epoch, raw_folder, "Number of vehicles", no_xticks=False
+        metrics["num_of_vehicles"], "Number of vehicles", epoch, raw_folder, "Number of vehicles", no_xticks=True
     )
 
 
